@@ -30,6 +30,21 @@ You now have:
 - Tweak settings in `.vscode/settings.json`
 - Add more extensions in `.vscode/extensions.json`
 
+## MCP Servers (Kilo Code + Cline)
+
+Your AI agents now have full tool access inside the container.
+
+**Featured:** Context7 (local caching) + GitHub + Brave Search + Crawl4AI (all pre-configured)
+
+### Quick Start
+
+1. `cp .env.example .env` (keys optional)
+2. `cp mcp/config.example.json mcp.json`
+3. Restart Kilo Code or Cline
+4. Start chatting — e.g. “use brave search for the latest Grok updates” or “crawl4ai this URL”
+
+See `mcp/README.md` for full list + security tips.
+
 ## Why This Template?
 
 - Follows official Microsoft + devcontainers.org best practices (2026)
