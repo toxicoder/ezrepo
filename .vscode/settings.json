@@ -1,0 +1,55 @@
+{
+  // ───── AI / Copilot — FULLY DISABLED (2026 best practice) ─────
+  "chat.disableAIFeatures": true,
+  "github.copilot.enable": {
+    "*": false,
+    "plaintext": false,
+    "markdown": false
+  },
+  "editor.inlineSuggest.enabled": false,
+  "inlineChat.enabled": false,
+  "workbench.commandPalette.ai.enabled": false,
+  // ───── Core Editor & Formatting (team standards) ─────
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": true,
+  "editor.renderWhitespace": "boundary",
+  "editor.wordWrap": "on",
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  },
+  // ───── Files & Save ─────
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  // ───── Explorer & UI ─────
+  "workbench.iconTheme": "material-icon-theme",
+  "explorer.compactFolders": false,
+  "explorer.confirmDelete": false,
+  "workbench.startupEditor": "none",
+  // ───── Terminal (zsh from common-utils) ─────
+  "terminal.integrated.defaultProfile.linux": "zsh",
+  "terminal.integrated.fontSize": 14,
+  // ───── Search & Exclude ─────
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/bower_components": true,
+    "**/.git": true,
+    "**/.vscode": false
+  },
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true
+  },
+  // ───── Extensions & Performance ─────
+  "extensions.autoUpdate": false,
+  "extensions.ignoreRecommendations": false
+}

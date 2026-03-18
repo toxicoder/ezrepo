@@ -1,0 +1,23 @@
+{
+  "recommendations": [
+    "eamodio.gitlens",
+    "esbenp.prettier-vscode",
+    "usernamehw.errorlens",
+    "PKief.material-icon-theme",
+    "streetsidesoftware.code-spell-checker",
+    "Gruntfuggly.todo-tree",
+    "aaron-bond.better-comments",
+    "ms-azuretools.vscode-docker",
+    "ritwickdey.LiveServer",
+    "humao.rest-client",
+    "EditorConfig.EditorConfig",
+    "kilocode.Kilo-Code",
+    "saoudrizwan.claude-dev",
+    "ms-vscode-remote.remote-containers"
+  ],
+  "unwantedRecommendations": [
+    "GitHub.copilot",
+    "GitHub.copilot-chat",
+    "github.vscode-github-actions"
+  ]
+}
