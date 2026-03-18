@@ -9,26 +9,16 @@
     },
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:1": {},
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": false,
+      "version": "latest"
     },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.12"
-    },
-    "ghcr.io/devcontainers/features/nvidia-cuda:1": {
-      "cudaVersion": "12.6",
-      "installCudnn": true
-    }
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
   },
   "customizations": {
     "vscode": {
-      "extensions": [
-        "ms-vscode-remote.remote-containers",
-        "kilocode.Kilo-Code",
-        "saoudrizwan.claude-dev",
-        "esbenp.prettier-vscode"
-      ]
+      "extensions": ["ms-vscode-remote.remote-containers"]
     }
   },
   "remoteUser": "vscode",
@@ -36,6 +26,7 @@
   "hostRequirements": {
     "cpus": 2,
     "memory": "4gb",
-    "storage": "10gb"
+    "storage": "10gb",
+    "gpu": "optional" // Enables GPU passthrough automatically on NVIDIA hosts
   }
 }
