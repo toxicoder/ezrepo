@@ -1,6 +1,6 @@
 # Ultimate Dev Environment Template
 
-**One repo. Zero "works on my machine."**  
+**One repo. Zero "works on my machine."**
 Cross-platform (Windows, macOS Apple Silicon, Linux arm64 + NVIDIA DGX Spark), pre-configured with the best extensions, and **all Microsoft AI/Copilot completely disabled**.
 
 ## 🚀 Quick Start (30 seconds)
