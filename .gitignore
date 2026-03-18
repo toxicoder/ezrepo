@@ -1,0 +1,13 @@
+# Dev Container / VS Code
+.devcontainer/.vscode/
+.vscode/*.log
+.vscode/*.code-workspace
+
+# Common ignores
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+.env
+*.pyc
+__pycache__/
