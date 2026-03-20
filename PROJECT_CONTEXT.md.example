@@ -1,0 +1,50 @@
+# PROJECT_CONTEXT.md
+
+## 1. Project Identity & Purpose
+
+> **Instruction for User**: Briefly describe what this specific project is building.
+
+- **Project Name**: [Insert Name]
+- **Goal**: [Describe the primary objective of the repository]
+- **Base Template**: Ultimate Dev Environment Template (2026 standards).
+
+## 2. Technical Environment (Immortal Context)
+
+This project runs in a pre-configured Dev Container:
+
+- **OS**: Ubuntu 24.04 (Multi-Arch).
+- **Runtimes**: Node LTS and Python 3.12.
+- **Shell**: Zsh + Oh My Zsh.
+- **Editor Settings**: 4-space indentation and Prettier formatting are mandatory.
+- **AI Constraints**: Built-in Copilot and VS Code AI features are fully disabled; you are the primary intelligence.
+
+## 3. Toolchain & AI Capabilities (MCP)
+
+You have active superpowers via Model Context Protocol (MCP) servers. Use them as follows:
+
+- **Filesystem**: Auto-approved for `read_file`, `list_directory`, and `search_files`.
+- **Context7**: Use this for version-specific library docs and code examples.
+- **Brave Search**: Use for real-time web data and AI news.
+- **Crawl4AI**: Use for high-fidelity web scraping into Markdown.
+- **GitHub**: Full management of PRs, issues, and repo operations.
+
+## 4. Architecture & Directory Map
+
+> **Instruction for User**: Map out the key directories of your current project here.
+
+- `/.devcontainer`: Environment configuration.
+- `/mcp`: MCP server configurations and documentation.
+- `/[src/app/lib]`: [Explain the project's specific folder structure].
+
+## 5. Workflow Rules
+
+- **Secret Management**: Never hardcode keys; use `.env` based on `.env.example`.
+- **Coding Style**: Follow Prettier standards; focus on high-performance, cross-platform code (Windows, macOS, Linux).
+- **Task Protocol**: Before starting a task, search the filesystem to understand current implementations.
+
+## 6. Current Project State
+
+> **Instruction for User**: Update this section regularly to keep the AI aligned.
+
+- **Status**: [e.g., Initial Setup / Feature Development / Bug Fixing]
+- **Next Milestone**: [What should the AI help with next?]
