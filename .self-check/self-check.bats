@@ -607,6 +607,32 @@ PY
     fail "a Go language set with no module passes silently instead of failing"
 }
 
+@test "the lint target reaches the documents it reports on" {
+  # `make lint` prints "ok: yamllint clean", and a depth cap once stopped the scan
+  # three levels above .github/workflows/, so the workflows passed the local gate and
+  # failed the same rule in CI. A gate that reports on files it never opened is the
+  # defect class this suite exists for.
+  local makefile="${TEMPLATE_ROOT}/Makefile"
+  grep -qE '^FIND_YAML := find \. -type f' "${makefile}" ||
+    fail "the YAML scan is not a named find from the repository root, so a depth cap can hide in one recipe"
+  if grep -qE 'FIND_YAML := .*maxdepth' "${makefile}"; then
+    fail "the YAML scan caps its depth, so anything below the cap is never linted"
+  fi
+  grep -qE '\$\(FIND_YAML\) -exec yamllint' "${makefile}" ||
+    fail "the lint target never hands FIND_YAML to yamllint"
+  # The property above only matters if there is YAML below the depth the cap once had.
+  local deep
+  deep="$(find "${TEMPLATE_ROOT}" -type f \( -name '*.yml' -o -name '*.yaml' \) \
+      -not -path '*/.git/*' -not -path '*/node_modules/*' |
+    sed "s|^${TEMPLATE_ROOT}/||" | awk -F/ 'NF >= 3' | wc -l | tr -d ' ')"
+  [ "${deep}" -ge 3 ] ||
+    fail "no YAML sits three path components down, so this test no longer proves the scan is deep"
+  find "${TEMPLATE_ROOT}" -type f -name '*.yml' \
+      -not -path '*/.git/*' -not -path '*/node_modules/*' |
+      grep -qF "${TEMPLATE_ROOT}/.github/workflows/security.yml" ||
+    fail "an uncapped find from the root does not list .github/workflows/security.yml"
+}
+
 @test "CodeQL detection reads only the repository's own source, and says so" {
   # The template keeps its JavaScript/TypeScript and Go inside .template-lanes/, and
   # CodeQL's file finder stops at a dot-prefixed directory: it extracts the YAML that

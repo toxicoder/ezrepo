@@ -34,7 +34,12 @@ RUNNER := tests/run.sh
 MAKEFILE_PATH := $(lastword $(MAKEFILE_LIST))
 CONSUMERS := .devcontainer/Dockerfile .github/workflows/ci.yml
 # Files that find-based targets scan. node_modules and .git never enter a scan.
+# YAML is scanned from the root downward with no depth cap on purpose: the documents
+# this rule exists to check live in .github/workflows/, three levels down, and a
+# capped scan reports "yamllint clean" without ever reading a workflow. .yamllint.yml
+# carries the ignore list every consumer shares.
 FIND_SH := find . -type f -name '*.sh' -not -path './.git/*' -not -path './node_modules/*'
+FIND_YAML := find . -type f \( -name '*.yml' -o -name '*.yaml' \) -not -path './.git/*' -not -path './node_modules/*'
 
 # $(call NEED,<binary>,<PIN_KEY>) aborts with an install hint when a tool a
 # present lane depends on is not installed. There is no path in this file that
@@ -143,8 +148,8 @@ lint:
 	printf -- '-> shfmt -d -i 2 -ci\n'; \
 	if $(FIND_SH) | grep -q .; then $(FIND_SH) -exec shfmt -d -i 2 -ci {} +; printf 'ok: shfmt clean\n'; else printf 'warning: no .sh files to check\n'; fi; \
 	$(call NEED,yamllint,YAMLLINT_VERSION); \
-	if find . -maxdepth 2 -type f \( -name '*.yml' -o -name '*.yaml' \) -not -path './node_modules/*' | grep -q .; then \
-	printf -- '-> yamllint\n'; find . -maxdepth 2 -type f \( -name '*.yml' -o -name '*.yaml' \) -not -path './node_modules/*' -exec yamllint -c .yamllint.yml {} +; printf 'ok: yamllint clean\n'; \
+	if $(FIND_YAML) | grep -q .; then \
+	printf -- '-> yamllint\n'; $(FIND_YAML) -exec yamllint -c .yamllint.yml {} +; printf 'ok: yamllint clean\n'; \
 	else printf 'warning: no YAML files to check\n'; fi; \
 	if [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -d tests/python ] || ls tests/test_*.py tests/*_test.py >/dev/null 2>&1; then \
 	$(call NEED,ruff,RUFF_VERSION); printf -- '-> ruff check\n'; ruff check .; ruff format --check .; printf 'ok: ruff clean\n'; \
