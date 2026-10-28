@@ -589,6 +589,24 @@ PY
     fail "the staged shell lane reported no passing result: ${output}"
 }
 
+@test "the CodeQL job compiles what it claims to analyse" {
+  # A scan that traces nothing reports green, which is the exact lie this suite
+  # exists to catch. `none` is refused outright by a compiled extractor, and an
+  # omitted build mode hands the decision to autobuild, which here reached for a
+  # python2 no runner has.
+  local entry="${TEMPLATE_ROOT}/.github/workflows/security.yml"
+  [ -f "${entry}" ] || fail ".github/workflows/security.yml is missing"
+  if grep -qE 'build-mode:[[:space:]]*none' "${entry}"; then
+    fail "the CodeQL job uses build-mode: none, which a compiled extractor refuses"
+  fi
+  grep -qE 'build-mode:[[:space:]]*manual' "${entry}" ||
+    fail "the CodeQL job names no build mode, so autobuild decides what gets traced"
+  grep -qE 'go build' "${entry}" ||
+    fail "the CodeQL job never compiles the go lane, so its Go scan would be empty"
+  grep -qE 'refusing to publish an empty Go scan' "${entry}" ||
+    fail "a Go language set with no module passes silently instead of failing"
+}
+
 @test "the template's own suite is optional for a rendered project" {
   # .self-check/ is generator-owned, so every entry point that reaches it has to say
   # what it skipped instead of failing a project that never asked for it. A guard

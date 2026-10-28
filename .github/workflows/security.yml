@@ -137,27 +137,43 @@ jobs:
       - name: Check out the tree
         uses: actions/checkout@v5
 
+      - name: Load pinned tool versions
+        # Read before setup-go so the compiler CodeQL watches is the compiler
+        # tool-versions.env names, rather than whatever the runner image froze.
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing; every tool version here comes from it"
+            exit 1
+          fi
+          grep -E '^[A-Z0-9_]+=' tool-versions.env >>"$GITHUB_ENV"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Initialize CodeQL
         # Third-party action: pinned to a major tag. Verify the SHA behind the tag
         # before bumping it (`git ls-remote https://github.com/github/codeql-action
         # v3`), and prefer a full commit SHA - this action runs a compiler-grade
         # analyser over your code inside your runners.
         #
-        # `build-mode: none` is right for what a render can hold today: shell, Python
-        # and TypeScript are all interpreted, so there is nothing to compile and an
-        # Autobuild only spends time looking for one. Autobuilding Python is worse
-        # than wasted here - it reaches for a `python2` that a runner does not have,
-        # and the job goes red on a repository with no build step at all.
+        # `manual` because this tree is mixed: shell, Python and TypeScript need no
+        # build at all, while Go refuses `none` outright and traces nothing unless
+        # something compiles it. Autobuild is the wrong instrument for both halves -
+        # it reaches for a `python2` no runner has, and it hunts for a go.mod this
+        # repository keeps inside the lane overlay. The step below does the one build
+        # that matters, and says so.
         #
         # Lane owners: you do not need to edit `languages` (it comes from
-        # detect-languages above), but a compiled lane DOES need a build step. CodeQL
-        # only traces what actually compiles: a Go or Java lane under `build-mode:
-        # none` analyses nothing and still reports green. Set `build-mode: autobuild`
-        # or drop the key and run `make build` between init and analyze.
+        # detect-languages above), but a compiled lane DOES need its build added to the
+        # step below. CodeQL only traces what actually compiles: a compiled language
+        # with no build reports green having analysed nothing.
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ needs.detect-languages.outputs.languages }}
-          build-mode: none
+          build-mode: manual
 
       - name: "Guard: no silent skip"
         # The extraction step above can produce zero traced files; that is not a
@@ -169,6 +185,33 @@ jobs:
             exit 1
           fi
           echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.languages }}'"
+
+      - name: Build the Go code for CodeQL
+        # Under build-mode: manual this is the only thing that produces Go traces, so
+        # a Go language with no build here would publish an empty scan and call it
+        # clean. A template checkout keeps its module inside the lane overlay; a
+        # rendered project has it at the root. Neither case may pass silently, so an
+        # absent module is an error rather than a note.
+        run: |
+          set -euo pipefail
+          langs="${{ needs.detect-languages.outputs.languages }}"
+          # The list arrives comma-separated; fold it to spaces so one word match can
+          # ask whether Go is in the set at all.
+          case " ${langs//,/ } " in
+            *" go "*) ;;
+            *) printf 'note: no Go in the language set, so there is nothing to compile\n'; exit 0 ;;
+          esac
+          if [ -f go.mod ]; then
+            printf -- '-> go build ./... (root module)\n'
+            go build ./...
+          elif [ -f .template-lanes/go/go.mod ]; then
+            printf -- '-> go build ./... (go lane overlay)\n'
+            (cd .template-lanes/go && go build ./...)
+          else
+            echo "::error::CodeQL is analysing Go but no go.mod was found at the root or in .template-lanes/go; refusing to publish an empty Go scan."
+            exit 1
+          fi
+          echo "ok: the Go module compiled, so CodeQL has traces to analyse"
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
