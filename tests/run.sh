@@ -418,10 +418,22 @@ run_typescript_lane() {
       return 0
     fi
     if [ ! -d "$ROOT_DIR/node_modules" ]; then
-      warn "typescript: node_modules missing; running 'npm ci' first"
-      if ! (cd "$ROOT_DIR" && npm ci --silent); then
-        err "typescript: npm ci failed"
-        return 0
+      # npm ci is the strict route: it installs exactly what the lockfile names and
+      # refuses anything else. A lane that has never had a lockfile committed cannot
+      # use it, so fall back to npm install and say so, because that is the case where
+      # CI and a contributor's terminal can resolve different versions.
+      if [ -f "$ROOT_DIR/package-lock.json" ]; then
+        warn "typescript: node_modules missing; running 'npm ci' first"
+        if ! (cd "$ROOT_DIR" && npm ci --silent); then
+          err "typescript: npm ci failed; fix the lockfile with npm install and commit it"
+          return 0
+        fi
+      else
+        warn "typescript: node_modules missing and no package-lock.json; running 'npm install' first"
+        if ! (cd "$ROOT_DIR" && npm install --no-audit --no-fund --silent); then
+          err "typescript: npm install failed; see the npm output above"
+          return 0
+        fi
       fi
     fi
   fi

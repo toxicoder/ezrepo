@@ -541,6 +541,54 @@ PY
 
 # ---- the suite's own entry points ---------------------------------------------
 
+@test "make test stages a lane rather than reporting nothing to do" {
+  # The template ships no lane at its root, so a test target that demands one fails a
+  # template checkout, and a target that tolerates one reports green having run
+  # nothing. The template's own tests are the lane overlays, staged and executed.
+  local makefile="${TEMPLATE_ROOT}/Makefile"
+  grep -qE '^test-lanes:' "${makefile}" ||
+    fail "make test has no lane-staging target, so a template checkout runs no test at all"
+  grep -qE '^\.PHONY:.*\btest-lanes\b' "${makefile}" ||
+    fail "test-lanes is absent from .PHONY, so a file of that name turns it into a no-op"
+  grep -qE 'test-lanes' "${makefile}" ||
+    fail "make test never delegates to the staging target"
+  grep -qE 'bash \$\(RUNNER\) --lane' "${makefile}" ||
+    fail "test-lanes never hands a lane to the dispatcher, so it stages nothing it runs"
+  # A staged tree that still carries the generator-owned paths is a template wearing
+  # a project's clothes, and a lane could reach code a rendered project never has.
+  grep -qE 'rm -rf .*\$\{work:\?\}/\.git' "${makefile}" ||
+    fail "the staged tree keeps .git, so it is not shaped like a rendered repository"
+  grep -qE 'rm -rf .*\.self-check' "${makefile}" ||
+    fail "the staged tree keeps .self-check/, so a lane can reach generator-only files"
+  # A :? guard on every recursive delete the staging recipe makes: an unset scratch
+  # path would delete the checkout instead of a scratch tree.
+  local block
+  block="$(awk '/^test-lanes:/{f=1} f && /^[a-z0-9_-]+:/ && !/^test-lanes:/{f=0} f' "${makefile}")"
+  [ -n "${block}" ] || fail "test-lanes has no recipe, so the target is decoration"
+  local unguarded
+  unguarded="$(printf '%s\n' "${block}" | grep -nE 'rm -rf' | { grep -v 'work:?' || true; })"
+  [ -z "${unguarded}" ] ||
+    fail "a recursive delete in test-lanes has no :? guard on its path: ${unguarded}"
+}
+
+@test "a staged lane overlay really runs its own tests" {
+  # The structural check above proves the target exists; this one proves the thing it
+  # stages passes. A lane whose tests cannot run in a clean tree is a lane nobody can
+  # render, and only executing it says so.
+  local work="${BATS_TEST_TMPDIR}/staged-shell"
+  mkdir -p "${work}"
+  cp -R "${TEMPLATE_ROOT}/." "${work}/"
+  rm -rf "${work:?}/.git" "${work:?}/.template-lanes" "${work:?}/.self-check"
+  cp -R "${TEMPLATE_ROOT}/.template-lanes/shell/." "${work}/"
+  [ -f "${work}/tests/main.sh" ] ||
+    [ -d "${work}/src" ] || fail "staging the shell lane produced no lane files"
+  run bash "${work}/tests/run.sh" --lane shell
+  [ "${status}" -eq 0 ] ||
+    fail "the staged shell lane failed its own suite (exit ${status}): ${output}"
+  [[ "${output}" == *"ok: shell"* ]] ||
+    fail "the staged shell lane reported no passing result: ${output}"
+}
+
 @test "the template's own suite is optional for a rendered project" {
   # .self-check/ is generator-owned, so every entry point that reaches it has to say
   # what it skipped instead of failing a project that never asked for it. A guard

@@ -57,9 +57,14 @@ jobs:
         run: |
           set -euo pipefail
           ver='${{ steps.pins.outputs.bats_version }}'
+          # The runner has no write access to /usr/local, so install into a prefix the
+          # job owns and publish its bin directory to the steps that follow. Installing
+          # from the pinned tag rather than a package registry keeps one source of
+          # truth for the version, which is tool-versions.env.
           git clone --depth 1 --branch "v${ver#v}" \
             https://github.com/bats-core/bats-core.git /tmp/bats-core
-          /tmp/bats-core/install.sh /usr/local
+          /tmp/bats-core/install.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
 
       - name: Guard - every pinned tool is on PATH
         run: |

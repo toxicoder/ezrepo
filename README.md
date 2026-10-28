@@ -86,9 +86,17 @@ make doctor      # is my toolchain what CI will use?
 make test-fast   # ~2 seconds: the shell lane, plus proof every runner exists
 make lint        # every static check for the lanes present
 make test        # every lane
+make test-lanes  # this repository: stage each overlay in a scratch tree, then test it
+make self-check  # template conformance (a rendered project has nothing to check)
 make validate    # the local mirror of CI
 make help        # the whole surface, self-documented
 ```
+
+`make test` runs whatever lanes are installed at the tree root, which in this
+repository is none -- the languages live under `.template-lanes/` until someone renders
+them. So in a template checkout `make test` delegates to `make test-lanes`, which copies
+each overlay into a scratch tree and runs it there; your rendered project runs the plain
+dispatcher instead.
 
 **Which check do I run first?** [AGENTS.md](AGENTS.md) has the cost-tiered table --
 cheap targeted test, medium fast suite, expensive hermetic run. Start at the top and

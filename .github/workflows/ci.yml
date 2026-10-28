@@ -141,16 +141,26 @@ jobs:
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check \
             "yamllint==${YAMLLINT_VERSION}" "pre-commit==${PRE_COMMIT_VERSION}"
-          npm install --global "prettier@${PRETTIER_VERSION}" "bats@${BATS_VERSION}"
-          # shellcheck and shfmt are fetched at their pinned version rather than
-          # taken from apt, because the archive version is whatever the runner image
-          # happens to ship and would silently disagree with tool-versions.env.
+          npm install --global "prettier@${PRETTIER_VERSION}"
+          # bats, shellcheck and shfmt are downloaded at their pinned version from the
+          # project that releases each of them. The runner image ships whatever apt
+          # happened to freeze, and a package registry does not carry every release, so
+          # both routes silently disagree with tool-versions.env. Everything lands in
+          # one job-owned prefix because the runner has no write access to /usr/local.
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/bats.tar.gz \
+            "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
+          tar -xzf /tmp/bats.tar.gz -C /tmp
+          "/tmp/bats-core-${BATS_VERSION}/install.sh" "$HOME/.local"
           curl -fsSL -o /tmp/shellcheck.tar.xz \
             "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
           tar -xJf /tmp/shellcheck.tar.xz -C /tmp
-          sudo install -m 0755 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
-          go install "mvdan.cc/sh/v3/cmd/shfmt@v${SHFMT_VERSION}"
-          echo "$HOME/go/bin" >>"$GITHUB_PATH"
+          install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
+            "$HOME/.local/bin/shellcheck"
+          curl -fsSL -o "$HOME/.local/bin/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          chmod 0755 "$HOME/.local/bin/shfmt"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
 
       # Runs after the install, so "is the tool present" is a question that can be
       # answered. A guard that runs before the tools exist can only ever report its
@@ -179,10 +189,10 @@ jobs:
           require node       "apt-get install -y nodejs"
           require shellcheck "see 'Install lint toolchain (pinned)'; pinned by SHELLCHECK_VERSION"
           require shfmt      "see 'Install lint toolchain (pinned)'; pinned by SHFMT_VERSION"
-          require bats       "npm install --global bats, pinned by BATS_VERSION"
-          require yamllint   "pipx install yamllint, pinned by YAMLLINT_VERSION"
+          require bats       "see 'Install lint toolchain (pinned)'; pinned by BATS_VERSION"
+          require yamllint   "see 'Install lint toolchain (pinned)'; pinned by YAMLLINT_VERSION"
           require prettier   "npm install --global prettier, pinned by PRETTIER_VERSION"
-          require pre-commit "pipx install pre-commit, pinned by PRE_COMMIT_VERSION"
+          require pre-commit "see 'Install lint toolchain (pinned)'; pinned by PRE_COMMIT_VERSION"
           if [ "$missing" -ne 0 ]; then
             echo "::error::${missing} required tool(s) missing or broken. Do not gate this step behind 'command -v ... || exit 0': a check that silently skips is a bug."
             exit 1
@@ -232,6 +242,18 @@ jobs:
       - name: Check out the tree
         uses: actions/checkout@v5
 
+      - name: Load pinned tool versions
+        # Read before the setup actions, so the runtimes this job installs are the
+        # runtimes tool-versions.env names. A runner on a floating "stable" proves a
+        # different thing than the pin the dev container and CI are meant to share.
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing; every tool version here comes from it"
+            exit 1
+          fi
+          grep -E '^[A-Z0-9_]+=' tool-versions.env >>"$GITHUB_ENV"
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -240,12 +262,29 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "stable"
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install lane toolchains (pinned)
+        # make test stages every lane under .template-lanes/ and runs each one, so this
+        # job needs what the lane runners invoke, not just a shell. bats comes from the
+        # bats-core tag rather than a package registry because the registry does not
+        # carry every release; the python tools come from the same pin file.
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/bats.tar.gz \
+            "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz"
+          tar -xzf /tmp/bats.tar.gz -C /tmp
+          "/tmp/bats-core-${BATS_VERSION}/install.sh" "$HOME/.local"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+          python3 -m pip install --disable-pip-version-check \
+            "pytest==${PYTEST_VERSION}" "pytest-cov==${PYTEST_COV_VERSION}" \
+            "ruff==${RUFF_VERSION}" "mypy==${MYPY_VERSION}"
 
       - name: "Guard: no silent skip"
         run: |
@@ -268,6 +307,18 @@ jobs:
           require git     "apt-get install -y git"
           require make    "apt-get install -y make"
           require python3 "apt-get install -y python3"
+          require node    "see 'Set up Node'; pinned by NODE_VERSION"
+          require npm     "see 'Set up Node'; pinned by NODE_VERSION"
+          require bats    "see 'Install lane toolchains (pinned)'; pinned by BATS_VERSION"
+          require pytest  "see 'Install lane toolchains (pinned)'; pinned by PYTEST_VERSION"
+          # The go command answers `go version`, not `go --version`, so the generic
+          # probe above cannot ask it the right question; ask it the one it answers.
+          if ! go version >/dev/null 2>&1; then
+            echo "::error::go is not installed and the go lane needs it (pinned by GO_VERSION)"
+            missing=$((missing + 1))
+          else
+            echo "ok: $(go version 2>&1)"
+          fi
           if [ "$missing" -ne 0 ]; then
             echo "::error::$missing required tool(s) missing or broken. Fix the environment; do not skip the suite."
             exit 1
@@ -285,10 +336,13 @@ jobs:
 
       - name: Run the test suite
         # `make test` owns dependency installation and coverage output, so CI and a
-        # contributor's terminal run the identical recipe. Coverage is reported
-        # rather than asserted until the suite has a floor worth defending; a
-        # threshold nobody enforces is decoration, and `|| true` around a suite is
-        # the bug this file exists to remove.
+        # contributor's terminal run the identical recipe. In this repository the
+        # target takes the lane-staging path (a template checkout has no lane at its
+        # root), so every overlay under .template-lanes/ is copied into a scratch tree
+        # and actually executed here. Coverage is reported rather than asserted until
+        # the suite has a floor worth defending; a threshold nobody enforces is
+        # decoration, and `|| true` around a suite is the bug this file exists to
+        # remove.
         run: make test
 
   # ---------------------------------------------------------------------------

@@ -143,16 +143,21 @@ jobs:
         # v3`), and prefer a full commit SHA - this action runs a compiler-grade
         # analyser over your code inside your runners.
         #
+        # `build-mode: none` is right for what a render can hold today: shell, Python
+        # and TypeScript are all interpreted, so there is nothing to compile and an
+        # Autobuild only spends time looking for one. Autobuilding Python is worse
+        # than wasted here - it reaches for a `python2` that a runner does not have,
+        # and the job goes red on a repository with no build step at all.
+        #
         # Lane owners: you do not need to edit `languages` (it comes from
-        # detect-languages above), but you DO need a build step here if your
-        # language is compiled. CodeQL only traces what actually compiles: a Go or
-        # Java lane without an Autobuild or an explicit build step analyses
-        # nothing and still reports green. Add `autobuild: true` or run
-        # `make build` between init and analyze.
+        # detect-languages above), but a compiled lane DOES need a build step. CodeQL
+        # only traces what actually compiles: a Go or Java lane under `build-mode:
+        # none` analyses nothing and still reports green. Set `build-mode: autobuild`
+        # or drop the key and run `make build` between init and analyze.
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ needs.detect-languages.outputs.languages }}
-          autobuild: "true"
+          build-mode: none
 
       - name: "Guard: no silent skip"
         # The extraction step above can produce zero traced files; that is not a

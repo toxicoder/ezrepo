@@ -41,7 +41,7 @@ FIND_SH := find . -type f -name '*.sh' -not -path './.git/*' -not -path './node_
 # prints "not found" and exits 0: a missing tool is a failed target.
 NEED = command -v $(1) >/dev/null 2>&1 || { printf 'error: %s is not installed but this repository needs it (pin $(2) in $(PINS); installed by .devcontainer/Dockerfile). Run "make doctor" for the full list.\n' '$(1)' '$(2)'; exit 1; }
 
-.PHONY: help doctor fmt lint test test-fast test-all coverage validate docs clean hooks self-check
+.PHONY: help doctor fmt lint test test-lanes test-fast test-all coverage validate docs clean hooks self-check
 
 ## help - list every target with its description (default goal)
 help:
@@ -158,11 +158,46 @@ lint:
 	$(call NEED,golangci-lint,GOLANGCI_LINT_VERSION); printf -- '-> golangci-lint run\n'; golangci-lint run ./...; printf 'ok: golangci-lint clean\n'; \
 	fi
 
-## test - run every language lane present (delegates to tests/run.sh)
+## test - run every lane; in a template checkout, stage each lane and test that
 test:
 	@set -eu; \
 	if [ ! -r $(RUNNER) ]; then printf 'error: %s is missing; every test run goes through it\n' '$(RUNNER)'; exit 1; fi; \
-	bash $(RUNNER)
+	if [ -d .self-check ]; then \
+		printf 'note: template checkout (a rendered project has no .self-check/), so no lane is installed at the root; staging each lane overlay instead\n'; \
+		$(MAKE) --no-print-directory test-lanes; \
+	else \
+		bash $(RUNNER); \
+	fi
+
+## test-lanes - copy each lane overlay into a scratch tree and run its tests there
+test-lanes:
+	@set -eu; \
+	lanes=.template-lanes; \
+	if [ ! -d "$$lanes" ]; then printf 'error: %s is absent, so there is no lane to stage\n' "$$lanes"; exit 1; fi; \
+	if [ -n '$(LANES)' ]; then wanted='$(LANES)'; \
+	else wanted="$$(cd "$$lanes" && ls -1d */ 2>/dev/null | tr -d /)"; fi; \
+	if [ -z "$$wanted" ]; then printf 'error: %s holds no lane directory\n' "$$lanes"; exit 1; fi; \
+	for name in $$wanted; do \
+		if [ ! -d "$$lanes/$$name" ]; then \
+			printf 'error: %s has no lane %s; present: %s\n' "$$lanes" "$$name" "$$(cd "$$lanes" && ls -1 | tr '\n' ' ')"; exit 1; \
+		fi; \
+	done; \
+	staged=0; \
+	for lane in $$wanted; do \
+		work="$${TMPDIR:-/tmp}/ezrepo-lane-$$lane.$$$$"; \
+		rm -rf "$${work:?}"; mkdir -p "$${work:?}"; \
+		cp -R . "$$work/"; \
+		rm -rf "$${work:?}/.git" "$${work:?}/.template-lanes" "$${work:?}/.self-check"; \
+		cp -R "$$lanes/$$lane/." "$$work/"; \
+		printf -- '-> lane %s staged into a scratch tree\n' "$$lane"; \
+		if ! ( cd "$$work" && bash $(RUNNER) --lane "$$lane" ); then \
+			printf 'error: lane %s failed; the scratch tree is left at %s for inspection\n' "$$lane" "$$work"; \
+			exit 1; \
+		fi; \
+		rm -rf "$${work:?}"; \
+		staged=$$((staged + 1)); \
+	done; \
+	printf 'summary: %s lane(s) staged and tested\n' "$$staged"
 
 ## test-fast - cheapest check that can still fail you: lane plan plus the shell lane
 test-fast:

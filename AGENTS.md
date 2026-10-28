@@ -63,6 +63,11 @@ question. Running the whole suite after a one-line doc edit is not thorough, it 
 One file changed: tier 1. A function others call: tier 2. A public symbol, a shared
 helper, a config key, or anything a cross-layer invariant touches: tier 3-4.
 
+In a template checkout the languages still live under `.template-lanes/` and nothing is
+installed at the tree root, so `make test` delegates to `make test-lanes`, which stages
+each overlay into a scratch tree and runs it there. A rendered project has no
+`.template-lanes/` and takes the plain dispatcher path.
+
 ## Tests
 
 - **The same-commit rule.** Every change to a production path lands with the test file
