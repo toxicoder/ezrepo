@@ -62,7 +62,7 @@ jobs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # Third-party action: pinned to a major tag. Verify the SHA behind the tag
       # before bumping it, and prefer a full commit SHA for anything this gate
@@ -111,7 +111,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -240,7 +240,7 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'push'
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Load pinned tool versions
         # Read before the setup actions, so the runtimes this job installs are the
@@ -361,7 +361,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Check out the full history
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # Full history is required: a shallow clone scans only the tip and
           # reports green over a leak buried in the commits it did not fetch.

@@ -75,7 +75,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Check out the tagged commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # The changelog section is read from history, and a tag released against
           # a shallow clone cannot be verified with --verify-tag without it.
@@ -172,7 +172,7 @@ jobs:
     needs: [build]
     steps:
       - name: Check out the tagged commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
