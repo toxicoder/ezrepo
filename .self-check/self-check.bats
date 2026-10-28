@@ -607,6 +607,87 @@ PY
     fail "a Go language set with no module passes silently instead of failing"
 }
 
+@test "CodeQL detection reads only the repository's own source, and says so" {
+  # The template keeps its JavaScript/TypeScript and Go inside .template-lanes/, and
+  # CodeQL's file finder stops at a dot-prefixed directory: it extracts the YAML that
+  # lives there and none of the source, then fails the job for want of JavaScript. A
+  # language counted from generator-owned payload is therefore a demand to scan code
+  # the scanner is blind to. Detection has to derive the set from tracked source
+  # outside those paths, skip out loud when that payload is all there is, and still
+  # refuse a repository with no analysable source at all. Each branch runs here
+  # against the text the workflow actually ships.
+  local entry="${TEMPLATE_ROOT}/.github/workflows/security.yml"
+  [ -f "${entry}" ] || fail ".github/workflows/security.yml is missing"
+  command -v git >/dev/null 2>&1 ||
+    fail "git is missing, so the detection branches cannot be executed"
+
+  local body="${BATS_TEST_TMPDIR}/detect-body.sh"
+  awk '
+    /^        id: detect$/ { indetect = 1; next }
+    indetect && /^        run: \|$/ { inrun = 1; next }
+    inrun {
+      if ($0 ~ /^          /) { sub(/^          /, ""); print; next }
+      if ($0 ~ /^[[:space:]]*$/) { print ""; next }
+      exit
+    }
+  ' "${entry}" >"${body}"
+  [ -s "${body}" ] || fail "the detect-languages step has no run block to execute"
+  grep -qE '^          consider ' "${entry}" ||
+    fail "detection stopped deriving languages from the tracked tree"
+
+  local out="${BATS_TEST_TMPDIR}/github_output"
+
+  # Branch 1: every analysable file sits under a generator-owned path, which is what a
+  # template checkout looks like.
+  local payload="${BATS_TEST_TMPDIR}/payload-only"
+  mkdir -p "${payload}/.template-lanes/typescript/src" "${payload}/.self-check"
+  printf 'export const x: number = 1;\n' >"${payload}/.template-lanes/typescript/src/index.ts"
+  printf 'name: ci\n' >"${payload}/.self-check/placeholder.yml"
+  git -C "${payload}" init -q .
+  git -C "${payload}" add -A
+  : >"${out}"
+  run bash -c 'cd "$1" && GITHUB_OUTPUT="$2" CODEQL_LANGUAGES="" bash "$3"' _ \
+    "${payload}" "${out}" "${body}"
+  [ "${status}" -eq 0 ] ||
+    fail "a tree whose only source is lane payload was refused instead of skipped (exit ${status}): ${output}"
+  [[ "${output}" == *"::notice::"* ]] ||
+    fail "the payload-only skip passed silently instead of announcing itself: ${output}"
+  [[ "${output}" == *"generator-owned lane payload"* ]] ||
+    fail "the payload-only skip did not name what it skipped: ${output}"
+  grep -q '^languages=$' "${out}" ||
+    fail "a template-shaped tree still handed CodeQL a language it cannot read: $(tr '\n' ' ' <"${out}")"
+
+  # Branch 2: the same language at the root, which is where a rendered project keeps
+  # it and where CodeQL can see it.
+  local rendered="${BATS_TEST_TMPDIR}/rendered"
+  mkdir -p "${rendered}/src"
+  printf 'export const x: number = 1;\n' >"${rendered}/src/index.ts"
+  git -C "${rendered}" init -q .
+  git -C "${rendered}" add -A
+  : >"${out}"
+  run bash -c 'cd "$1" && GITHUB_OUTPUT="$2" CODEQL_LANGUAGES="" bash "$3"' _ \
+    "${rendered}" "${out}" "${body}"
+  [ "${status}" -eq 0 ] ||
+    fail "a rendered-shaped tree was refused (exit ${status}): ${output}"
+  grep -q '^interpreted=javascript-typescript$' "${out}" ||
+    fail "source at the repository root was never offered to CodeQL: $(tr '\n' ' ' <"${out}")"
+
+  # Branch 3: nothing analysable anywhere. This stays an error, so the skip above can
+  # only ever mean "not this repository's code" and never "nobody looked".
+  local barren="${BATS_TEST_TMPDIR}/barren"
+  mkdir -p "${barren}"
+  printf '# readme\n' >"${barren}/README.md"
+  git -C "${barren}" init -q .
+  git -C "${barren}" add -A
+  : >"${out}"
+  run bash -c 'cd "$1" && GITHUB_OUTPUT="$2" CODEQL_LANGUAGES="" bash "$3"' _ \
+    "${barren}" "${out}" "${body}"
+  [ "${status}" -ne 0 ] ||
+    fail "a repository with no analysable source passed instead of failing"
+  [[ "${output}" == *"no analysable source"* ]] ||
+    fail "the empty-tree failure did not print the fix: ${output}"
+}
+
 @test "the template's own suite is optional for a rendered project" {
   # .self-check/ is generator-owned, so every entry point that reaches it has to say
   # what it skipped instead of failing a project that never asked for it. A guard

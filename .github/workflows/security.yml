@@ -9,8 +9,8 @@
 #
 # What each job protects:
 #   - detect-languages: refuses to let CodeQL run over an empty language set.
-#   - codeql: the code itself (injection, path traversal, command execution,
-#     weak crypto, tainted data reaching a sink).
+#   - codeql (interpreted) / codeql (compiled): the code itself (injection, path
+#     traversal, command execution, weak crypto, tainted data reaching a sink).
 #   - secret-scan: the repository history (keys, tokens, passwords in any commit,
 #     not just the tip).
 #
@@ -49,8 +49,9 @@ env:
   #   swift, kotlin, powershell  # as applicable
   #
   # Example: CODEQL_LANGUAGES: "python, javascript-typescript"
-  # Leaving it empty is allowed: detection then infers it and fails the job if the
-  # tree contains no analysable source, with the fix printed.
+  # Leaving it empty is allowed: detection then infers it from the files tracked
+  # outside the generator-owned lane payload, and fails the job if the repository
+  # has no analysable source of its own, with the fix printed.
   CODEQL_LANGUAGES: ""
 
 jobs:
@@ -60,6 +61,9 @@ jobs:
   # This job exists to close the specific hole where a workflow is copied, its
   # language list never filled in, and CodeQL "succeeds" having analysed zero
   # files. Here, zero analysable languages is an error with the fix written out.
+  # The one case it does not fail is a template checkout, where the only
+  # CodeQL-readable files are the lane overlays; that case prints what was skipped
+  # and why, and both scan jobs stand down instead of scanning nothing quietly.
   # ---------------------------------------------------------------------------
   detect-languages:
     name: detect-languages (CodeQL)
@@ -99,7 +103,20 @@ jobs:
           langs=""
           interpreted=""
           compiled=""
-          consider() {
+          payload_only=""
+          # Generator-owned payload: the lane overlays a scaffolding tool copies to the
+          # project root and then strips from the rendered tree. It is sample code on
+          # loan, not this repository's source, and CodeQL cannot read it either way -
+          # its JavaScript/TypeScript file finder stops at a dot-prefixed directory, so
+          # the extractor walks past `.template-lanes/` entirely and then reports that
+          # it saw no JavaScript at all. Counting such a language anyway asks a job to
+          # scan code the scanner is blind to, which fails the scan rather than
+          # revealing anything. The payload gets its CodeQL pass in every repository
+          # rendered from this template, because there it sits at the root; inside this
+          # repository each lane is held to its own real toolchain (lint, typecheck,
+          # tests) by the per-lane jobs in .github/workflows/ci.yml.
+          GENERATED_RE='^(\.template-lanes|\.self-check)/'
+          add_lang() {
             local lang="$1"
             langs="$(add "${lang}" "${langs}")"
             if is_compiled "${lang}"; then
@@ -108,24 +125,40 @@ jobs:
               interpreted="$(add "${lang}" "${interpreted}")"
             fi
           }
+          own_source() {
+            git ls-files -- "$@" | { grep -vE "${GENERATED_RE}" || true; } | grep -q .
+          }
+          any_source() { git ls-files -- "$@" | grep -q .; }
+          consider() {
+            local lang="$1"
+            shift
+            if own_source "$@"; then
+              add_lang "${lang}"
+            elif any_source "$@"; then
+              payload_only="$(add "${lang}" "${payload_only}")"
+            fi
+          }
+          write_outputs() {
+            echo "languages=${langs}" >>"$GITHUB_OUTPUT"
+            echo "interpreted=${interpreted}" >>"$GITHUB_OUTPUT"
+            echo "compiled=${compiled}" >>"$GITHUB_OUTPUT"
+          }
           if [ -n "${CODEQL_LANGUAGES}" ]; then
             declared="$(printf '%s' "${CODEQL_LANGUAGES}" | tr ',' ' ')"
-            for lang in ${declared}; do consider "${lang}"; done
-            echo "languages=${langs}" >> "$GITHUB_OUTPUT"
-            echo "interpreted=${interpreted}" >> "$GITHUB_OUTPUT"
-            echo "compiled=${compiled}" >> "$GITHUB_OUTPUT"
+            for lang in ${declared}; do add_lang "${lang}"; done
+            write_outputs
             echo "ok: using the declared language set: ${langs}"
             exit 0
           fi
-          if git ls-files '*.py' | grep -q .; then consider python; fi
-          if git ls-files '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' | grep -q .; then consider javascript-typescript; fi
-          if git ls-files '*.go' | grep -q .; then consider go; fi
-          if git ls-files '*.java' | grep -q .; then consider java; fi
-          if git ls-files '*.cs' | grep -q .; then consider csharp; fi
-          if git ls-files '*.rb' | grep -q .; then consider ruby; fi
-          if git ls-files '*.rs' | grep -q .; then consider rust; fi
-          if git ls-files '*.c' '*.cpp' '*.cc' '*.h' '*.hpp' | grep -q .; then consider cpp; fi
-          if [ -z "${langs}" ]; then
+          consider python '*.py'
+          consider javascript-typescript '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs'
+          consider go '*.go'
+          consider java '*.java'
+          consider csharp '*.cs'
+          consider ruby '*.rb'
+          consider rust '*.rs'
+          consider cpp '*.c' '*.cpp' '*.cc' '*.h' '*.hpp'
+          if [ -z "${langs}" ] && [ -z "${payload_only}" ]; then
             cat >&2 <<'MSG'
           ::error::CodeQL found no analysable source in this repository and this
           job refuses to report success on an empty language set. Fix it one of two
@@ -138,9 +171,15 @@ jobs:
           MSG
             exit 1
           fi
-          echo "languages=${langs}" >> "$GITHUB_OUTPUT"
-          echo "interpreted=${interpreted}" >> "$GITHUB_OUTPUT"
-          echo "compiled=${compiled}" >> "$GITHUB_OUTPUT"
+          if [ -z "${langs}" ]; then
+            echo "::notice::the only CodeQL-readable files in this tree are generator-owned lane payload (${payload_only}). CodeQL's file finder cannot descend the dot-prefixed directory that holds them, and the payload is sample code for a rendered project rather than this repository's source, so both scan jobs skip. That payload is scanned wherever it becomes real code - every repository scaffolded from this template, where the lane lands at the root - and inside this repository the lane is gated by its own lint, typecheck and test jobs in .github/workflows/ci.yml. A project whose own source is in one of those languages still gets scanned normally."
+            write_outputs
+            exit 0
+          fi
+          if [ -n "${payload_only}" ]; then
+            echo "::notice::'${payload_only}' appears in this tree only as generator-owned lane payload, which CodeQL's file finder cannot descend; it is scanned once a project is scaffolded from this template. See the comment above the detection block."
+          fi
+          write_outputs
           echo "ok: CodeQL will analyse '${langs}' as interpreted='${interpreted}' compiled='${compiled}'"
 
   # ---------------------------------------------------------------------------
@@ -188,8 +227,10 @@ jobs:
           build-mode: none
 
       - name: "Guard: no silent skip"
-        # The extraction step above can produce zero traced files; that is not a
-        # failure to CodeQL, so this is where it becomes one.
+        # The job is already conditioned on a non-empty list, so reaching it with an
+        # empty one means the condition or the outputs were edited apart. CodeQL
+        # itself fails a language it extracted nothing from, so this guard covers the
+        # plumbing rather than the scan.
         run: |
           set -euo pipefail
           if [ -z "${{ needs.detect-languages.outputs.interpreted }}" ]; then
@@ -238,9 +279,9 @@ jobs:
 
       - name: Initialize CodeQL
         # `manual`, because the one build this tree needs is the one the step below
-        # runs and names. Autobuild would hunt for a go.mod this repository keeps
-        # inside the go lane overlay rather than at the root, and `none` is refused by
-        # the Go extractor.
+        # runs and names. Autobuild would hunt for a go.mod at the root, which a
+        # compiled language only has once it is rendered into a project, and `none` is
+        # refused by the Go extractor.
         #
         # Lane owners: you do not need to edit `languages` (it comes from
         # detect-languages above), but a compiled lane DOES need its build added to the
@@ -263,9 +304,10 @@ jobs:
       - name: Build the Go code for CodeQL
         # Under build-mode: manual this is the only thing that produces Go traces, so
         # a Go language with no build here would publish an empty scan and call it
-        # clean. A template checkout keeps its module inside the lane overlay; a
-        # rendered project has it at the root. Neither case may pass silently, so an
-        # absent module is an error rather than a note.
+        # clean. A rendered project has go.mod at the root; a repository that declares
+        # CODEQL_LANGUAGES: go itself may keep the module inside the lane overlay, so
+        # that path is tried as well. Neither may pass silently, so a tree with neither
+        # is an error rather than a note.
         run: |
           set -euo pipefail
           if [ -f go.mod ]; then
