@@ -379,6 +379,6 @@ jobs:
       # entry needs a reason and a human reviewer; `continue-on-error` on this step
       # is not an acceptable substitute for one.
       - name: Scan history for secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
