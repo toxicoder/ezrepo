@@ -634,13 +634,13 @@ PY
 }
 
 @test "CodeQL detection reads only the repository's own source, and says so" {
-  # The template keeps its JavaScript/TypeScript and Go inside .template-lanes/, and
-  # CodeQL's file finder stops at a dot-prefixed directory: it extracts the YAML that
-  # lives there and none of the source, then fails the job for want of JavaScript. A
-  # language counted from generator-owned payload is therefore a demand to scan code
-  # the scanner is blind to. Detection has to derive the set from tracked source
-  # outside those paths, skip out loud when that payload is all there is, and still
-  # refuse a repository with no analysable source at all. Each branch runs here
+  # The template keeps its JavaScript/TypeScript and Go inside .template-lanes/, and the
+  # JavaScript/TypeScript extractor refuses to descend a dot-prefixed directory: it read
+  # the YAML under .github, none of the lane's TypeScript, and then failed the job for
+  # want of JavaScript. A language counted from generator-owned payload is therefore a
+  # demand to scan code the scanner cannot see. Detection has to derive the set from
+  # tracked source outside those paths, skip out loud when that payload is all there is,
+  # and still refuse a repository with no analysable source at all. Each branch runs here
   # against the text the workflow actually ships.
   local entry="${TEMPLATE_ROOT}/.github/workflows/security.yml"
   [ -f "${entry}" ] || fail ".github/workflows/security.yml is missing"

@@ -106,15 +106,18 @@ jobs:
           payload_only=""
           # Generator-owned payload: the lane overlays a scaffolding tool copies to the
           # project root and then strips from the rendered tree. It is sample code on
-          # loan, not this repository's source, and CodeQL cannot read it either way -
-          # its JavaScript/TypeScript file finder stops at a dot-prefixed directory, so
-          # the extractor walks past `.template-lanes/` entirely and then reports that
-          # it saw no JavaScript at all. Counting such a language anyway asks a job to
-          # scan code the scanner is blind to, which fails the scan rather than
-          # revealing anything. The payload gets its CodeQL pass in every repository
-          # rendered from this template, because there it sits at the root; inside this
-          # repository each lane is held to its own real toolchain (lint, typecheck,
-          # tests) by the per-lane jobs in .github/workflows/ci.yml.
+          # loan, not this repository's source, so it is not what this scan is for. It is
+          # also unreadable in part: the JavaScript/TypeScript extractor refuses to
+          # descend any dot-prefixed directory, exempting only `.github`, so it walks past
+          # `.template-lanes/` and then fails the job for want of any JavaScript. Python
+          # does read files inside a dot-directory, which is why the cut here is by
+          # ownership rather than by visibility. Counting a language whose only source the
+          # extractor cannot see asks for a scan that has to fail, and teaches nobody
+          # anything. The payload gets its CodeQL pass in every repository rendered from
+          # this template, because there it sits at the root; inside this repository each
+          # lane is held to its own real toolchain (lint, typecheck, tests) by the
+          # per-lane jobs in .github/workflows/ci.yml.
+          # https://github.com/github/codeql/blob/codeql-cli/v2.27.2/javascript/extractor/src/com/semmle/js/extractor/AutoBuild.java#L1186
           GENERATED_RE='^(\.template-lanes|\.self-check)/'
           add_lang() {
             local lang="$1"
@@ -175,21 +178,22 @@ jobs:
             echo "::notice::CodeQL skipped: the only source here is generator-owned lane payload (${payload_only})."
             cat <<'MSG'
           The lane overlays under .template-lanes/ are sample code that a scaffolding
-          tool copies to the project root and then strips, and CodeQL's file finder
-          stops at a dot-prefixed directory, so it cannot read them from this location.
-          They get their CodeQL pass wherever they become real code: every repository
-          scaffolded from this template, where the lane lands at the root. Inside this
-          repository each lane is held to its own lint, typecheck and test jobs in
-          .github/workflows/ci.yml. A project that puts one of these languages at its
-          root is scanned normally, and a repository with no source at all still fails
-          this job rather than passing over an empty scan.
+          tool copies to the project root and then strips. They are not this repository's
+          source, and the JavaScript/TypeScript extractor will not descend a
+          dot-prefixed directory to read them anyway. They get their CodeQL pass
+          wherever they become real code: every repository scaffolded from this template,
+          where the lane lands at the root. Inside this repository each lane is held to
+          its own lint, typecheck and test jobs in .github/workflows/ci.yml. A project
+          that puts one of these languages at its root is scanned normally, and a
+          repository with no source at all still fails this job rather than passing over
+          an empty scan.
           MSG
             write_outputs
             exit 0
           fi
           if [ -n "${payload_only}" ]; then
-            echo "::notice::'${payload_only}' appears only as generator-owned lane payload, which CodeQL cannot read from here."
-            echo "It is scanned in every repository scaffolded from this template, where the lane lands at the root. See the comment above the detection block."
+            echo "::notice::'${payload_only}' appears only as generator-owned lane payload, so it sits outside this repository's own scan."
+            echo "The lane overlays are sample code a scaffolding tool copies to the project root; they are scanned there, where the extractor can read them."
           fi
           write_outputs
           echo "ok: CodeQL will analyse '${langs}' as interpreted='${interpreted}' compiled='${compiled}'"
