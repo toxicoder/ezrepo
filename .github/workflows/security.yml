@@ -71,6 +71,8 @@ jobs:
       cancel-in-progress: true
     outputs:
       languages: ${{ steps.detect.outputs.languages }}
+      interpreted: ${{ steps.detect.outputs.interpreted }}
+      compiled: ${{ steps.detect.outputs.compiled }}
     steps:
       - name: Check out the tree
         uses: actions/checkout@v5
@@ -81,24 +83,49 @@ jobs:
           CODEQL_LANGUAGES: ${{ env.CODEQL_LANGUAGES }}
         run: |
           set -euo pipefail
+          # CodeQL takes at most one build mode per job, and a language refuses a mode
+          # it cannot honour: the Go extractor rejects `none` outright, and Python
+          # rejects anything but `none`. So the set is split here and each half gets its
+          # own job and its own mode, rather than one job guessing for all of them.
+          add() {
+            if [ -z "$2" ]; then printf '%s' "$1"; else printf '%s, %s' "$2" "$1"; fi
+          }
+          is_compiled() {
+            case " $1 " in
+              *" go "* | *" java "* | *" csharp "* | *" cpp "* | *" rust "*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          langs=""
+          interpreted=""
+          compiled=""
+          consider() {
+            local lang="$1"
+            langs="$(add "${lang}" "${langs}")"
+            if is_compiled "${lang}"; then
+              compiled="$(add "${lang}" "${compiled}")"
+            else
+              interpreted="$(add "${lang}" "${interpreted}")"
+            fi
+          }
           if [ -n "${CODEQL_LANGUAGES}" ]; then
-            echo "languages=${CODEQL_LANGUAGES}" >> "$GITHUB_OUTPUT"
-            echo "ok: using the declared language set: ${CODEQL_LANGUAGES}"
+            declared="$(printf '%s' "${CODEQL_LANGUAGES}" | tr ',' ' ')"
+            for lang in ${declared}; do consider "${lang}"; done
+            echo "languages=${langs}" >> "$GITHUB_OUTPUT"
+            echo "interpreted=${interpreted}" >> "$GITHUB_OUTPUT"
+            echo "compiled=${compiled}" >> "$GITHUB_OUTPUT"
+            echo "ok: using the declared language set: ${langs}"
             exit 0
           fi
-          langs=""
-          add() {
-            if [ -z "$langs" ]; then langs="$1"; else langs="${langs}, $1"; fi
-          }
-          if git ls-files '*.py' | grep -q .; then add python; fi
-          if git ls-files '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' | grep -q .; then add javascript-typescript; fi
-          if git ls-files '*.go' | grep -q .; then add go; fi
-          if git ls-files '*.java' | grep -q .; then add java; fi
-          if git ls-files '*.cs' | grep -q .; then add csharp; fi
-          if git ls-files '*.rb' | grep -q .; then add ruby; fi
-          if git ls-files '*.rs' | grep -q .; then add rust; fi
-          if git ls-files '*.c' '*.cpp' '*.cc' '*.h' '*.hpp' | grep -q .; then add cpp; fi
-          if [ -z "$langs" ]; then
+          if git ls-files '*.py' | grep -q .; then consider python; fi
+          if git ls-files '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' | grep -q .; then consider javascript-typescript; fi
+          if git ls-files '*.go' | grep -q .; then consider go; fi
+          if git ls-files '*.java' | grep -q .; then consider java; fi
+          if git ls-files '*.cs' | grep -q .; then consider csharp; fi
+          if git ls-files '*.rb' | grep -q .; then consider ruby; fi
+          if git ls-files '*.rs' | grep -q .; then consider rust; fi
+          if git ls-files '*.c' '*.cpp' '*.cc' '*.h' '*.hpp' | grep -q .; then consider cpp; fi
+          if [ -z "${langs}" ]; then
             cat >&2 <<'MSG'
           ::error::CodeQL found no analysable source in this repository and this
           job refuses to report success on an empty language set. Fix it one of two
@@ -112,17 +139,25 @@ jobs:
             exit 1
           fi
           echo "languages=${langs}" >> "$GITHUB_OUTPUT"
-          echo "ok: CodeQL will analyse: ${langs}"
+          echo "interpreted=${interpreted}" >> "$GITHUB_OUTPUT"
+          echo "compiled=${compiled}" >> "$GITHUB_OUTPUT"
+          echo "ok: CodeQL will analyse '${langs}' as interpreted='${interpreted}' compiled='${compiled}'"
 
   # ---------------------------------------------------------------------------
-  # codeql: static analysis of the source itself.
+  # codeql: static analysis of the source itself, split by build mode.
   #
   # `security-events: write` is required to upload the SARIF that populates the
   # repository's Security -> Code scanning tab; nothing else here writes.
   # `actions: read` lets the job read the CodeQL bundle provenance it is pinned to.
+  #
+  # Two jobs, not one, because codeql-action accepts a single build mode per job and
+  # a language refuses a mode it cannot honour: Python rejects everything but `none`,
+  # and the Go extractor rejects `none` outright. One job over both languages cannot
+  # be configured correctly, so the halves run separately and each skips only when
+  # detect-languages found no language of its kind.
   # ---------------------------------------------------------------------------
-  codeql:
-    name: codeql (static analysis)
+  codeql-interpreted:
+    name: codeql (interpreted)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -130,9 +165,57 @@ jobs:
       actions: read
       pull-requests: read
     concurrency:
-      group: security-codeql-${{ github.ref }}
+      group: security-codeql-interpreted-${{ github.ref }}
       cancel-in-progress: true
     needs: [detect-languages]
+    if: needs.detect-languages.outputs.interpreted != ''
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        # Third-party action: pinned to a major tag. Verify the SHA behind the tag
+        # before bumping it (`git ls-remote https://github.com/github/codeql-action
+        # v3`), and prefer a full commit SHA - this action runs a compiler-grade
+        # analyser over your code inside your runners.
+        #
+        # `none` is the only mode these languages accept and the right one: nothing
+        # here is compiled, so an autobuild would only look for a build that does not
+        # exist (and, for Python, reach for a `python2` no runner has).
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ needs.detect-languages.outputs.interpreted }}
+          build-mode: none
+
+      - name: "Guard: no silent skip"
+        # The extraction step above can produce zero traced files; that is not a
+        # failure to CodeQL, so this is where it becomes one.
+        run: |
+          set -euo pipefail
+          if [ -z "${{ needs.detect-languages.outputs.interpreted }}" ]; then
+            echo "::error::CodeQL received an empty interpreted language list; refusing to publish an empty scan."
+            exit 1
+          fi
+          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.interpreted }}'"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ needs.detect-languages.outputs.interpreted }}"
+
+  codeql-compiled:
+    name: codeql (compiled)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: read
+    concurrency:
+      group: security-codeql-compiled-${{ github.ref }}
+      cancel-in-progress: true
+    needs: [detect-languages]
+    if: needs.detect-languages.outputs.compiled != ''
     steps:
       - name: Check out the tree
         uses: actions/checkout@v5
@@ -154,17 +237,10 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Initialize CodeQL
-        # Third-party action: pinned to a major tag. Verify the SHA behind the tag
-        # before bumping it (`git ls-remote https://github.com/github/codeql-action
-        # v3`), and prefer a full commit SHA - this action runs a compiler-grade
-        # analyser over your code inside your runners.
-        #
-        # `manual` because this tree is mixed: shell, Python and TypeScript need no
-        # build at all, while Go refuses `none` outright and traces nothing unless
-        # something compiles it. Autobuild is the wrong instrument for both halves -
-        # it reaches for a `python2` no runner has, and it hunts for a go.mod this
-        # repository keeps inside the lane overlay. The step below does the one build
-        # that matters, and says so.
+        # `manual`, because the one build this tree needs is the one the step below
+        # runs and names. Autobuild would hunt for a go.mod this repository keeps
+        # inside the go lane overlay rather than at the root, and `none` is refused by
+        # the Go extractor.
         #
         # Lane owners: you do not need to edit `languages` (it comes from
         # detect-languages above), but a compiled lane DOES need its build added to the
@@ -172,19 +248,17 @@ jobs:
         # with no build reports green having analysed nothing.
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ needs.detect-languages.outputs.languages }}
+          languages: ${{ needs.detect-languages.outputs.compiled }}
           build-mode: manual
 
       - name: "Guard: no silent skip"
-        # The extraction step above can produce zero traced files; that is not a
-        # failure to CodeQL, so this is where it becomes one.
         run: |
           set -euo pipefail
-          if [ -z "${{ needs.detect-languages.outputs.languages }}" ]; then
-            echo "::error::CodeQL received an empty language list; refusing to publish an empty scan."
+          if [ -z "${{ needs.detect-languages.outputs.compiled }}" ]; then
+            echo "::error::CodeQL received an empty compiled language list; refusing to publish an empty scan."
             exit 1
           fi
-          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.languages }}'"
+          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.compiled }}'"
 
       - name: Build the Go code for CodeQL
         # Under build-mode: manual this is the only thing that produces Go traces, so
@@ -194,13 +268,6 @@ jobs:
         # absent module is an error rather than a note.
         run: |
           set -euo pipefail
-          langs="${{ needs.detect-languages.outputs.languages }}"
-          # The list arrives comma-separated; fold it to spaces so one word match can
-          # ask whether Go is in the set at all.
-          case " ${langs//,/ } " in
-            *" go "*) ;;
-            *) printf 'note: no Go in the language set, so there is nothing to compile\n'; exit 0 ;;
-          esac
           if [ -f go.mod ]; then
             printf -- '-> go build ./... (root module)\n'
             go build ./...
@@ -216,7 +283,7 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:${{ needs.detect-languages.outputs.languages }}"
+          category: "/language:${{ needs.detect-languages.outputs.compiled }}"
 
   # ---------------------------------------------------------------------------
   # secret-scan: credentials anywhere in history.

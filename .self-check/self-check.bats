@@ -589,18 +589,18 @@ PY
     fail "the staged shell lane reported no passing result: ${output}"
 }
 
-@test "the CodeQL job compiles what it claims to analyse" {
-  # A scan that traces nothing reports green, which is the exact lie this suite
-  # exists to catch. `none` is refused outright by a compiled extractor, and an
-  # omitted build mode hands the decision to autobuild, which here reached for a
-  # python2 no runner has.
+@test "every CodeQL job names a build mode and compiles what needs compiling" {
+  # A scan that traces nothing reports green, which is the exact lie this suite exists
+  # to catch. codeql-action takes one build mode per job, and a language refuses a mode
+  # it cannot honour, so each init step has to name its own.
   local entry="${TEMPLATE_ROOT}/.github/workflows/security.yml"
   [ -f "${entry}" ] || fail ".github/workflows/security.yml is missing"
-  if grep -qE 'build-mode:[[:space:]]*none' "${entry}"; then
-    fail "the CodeQL job uses build-mode: none, which a compiled extractor refuses"
-  fi
-  grep -qE 'build-mode:[[:space:]]*manual' "${entry}" ||
-    fail "the CodeQL job names no build mode, so autobuild decides what gets traced"
+  local inits modes
+  inits="$(grep -cE 'uses: github/codeql-action/init@' "${entry}")"
+  modes="$(grep -cE 'build-mode:[[:space:]]*(none|autobuild|manual)' "${entry}")"
+  [ "${inits}" -ge 1 ] || fail "the workflow never initialises CodeQL"
+  [ "${modes}" -ge "${inits}" ] ||
+    fail "${inits} CodeQL init steps but ${modes} named build modes; an unnamed mode hands the choice to autobuild"
   grep -qE 'go build' "${entry}" ||
     fail "the CodeQL job never compiles the go lane, so its Go scan would be empty"
   grep -qE 'refusing to publish an empty Go scan' "${entry}" ||
