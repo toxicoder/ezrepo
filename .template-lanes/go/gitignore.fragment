@@ -1,0 +1,39 @@
+# Lane scratch produced by the Go toolchain, never a source of truth.
+
+# Built binaries: `go build` with no -o drops the executable in the module root
+# or next to the package, and it is regenerated from source in seconds
+/bin/
+/dist/
+/src/main
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and profiling output: `go test -c` and `go test -cpuprofile` both write
+# these next to the package they build
+*.test
+*.out
+*.prof
+
+# Coverage report from `go test -coverprofile=coverage.out` / `make coverage`;
+# it is derived from the run, so a committed one is a stale one waiting to lie
+coverage.out
+coverage.html
+
+# golangci-lint's incremental cache, when GOFLAGS or a CI step points it at the
+# checkout instead of the user cache dir
+.golangci-lint/
+
+# Vendored dependencies: `go mod vendor` regenerates the whole tree, and the diff
+# would bury every real change in it
+vendor/
+
+# Per-checkout workspace state. `go work` resolves packages across sibling
+# directories on this machine only, so it must never describe anyone else's tree
+go.work
+go.work.sum
+
+# The binary delve builds and attaches to when the debugger runs from an editor
+__debug_bin*

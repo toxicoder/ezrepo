@@ -1,0 +1,79 @@
+# syntax=docker/dockerfile:1
+#
+# ## Dockerfile.test -- run the test gate in a container, with TEST_MODE
+#
+# Separate from `Dockerfile` on purpose: the gate image is the toolchain you
+# develop in and should rebuild rarely, while this one bakes a copy of the tree
+# and runs a chosen slice of the gate. Building it is how you prove a change is
+# green in a clean environment before you push, with nothing installed on the
+# host beyond Docker.
+#
+# It is built ON TOP of the gate image, so the pinned toolchain is defined in
+# exactly one place (`Dockerfile`) and this file only chooses which checks to run.
+#
+# Exact commands (from the repository root; build the gate image once):
+#
+#   docker build -t __PROJECT_SLUG__-dev .
+#   docker build -f Dockerfile.test --build-arg TEST_MODE=full \
+#     -t __PROJECT_SLUG__-test .
+#   docker run --rm __PROJECT_SLUG__-test
+#
+# TEST_MODE selects the slice, and an unknown value fails the BUILD (it never
+# falls back to a default, because a typo that quietly runs "something" is the
+# silent-skip bug this repo bans):
+#
+#   smoke  the shell lane only: tests/run.sh --lane shell. Minutes at most.
+#   lint   make lint (shellcheck, shfmt, yamllint, and every present lane's lint)
+#   docs   make docs (prettier check, local link audit, ADR numbering audit)
+#   full   make doctor + make test: every pin verified, then every lane
+#
+# Point it at a published gate image in CI instead of building locally:
+#
+#   docker build -f Dockerfile.test --build-arg GATE_IMAGE=ghcr.io/__PROJECT_OWNER__/__PROJECT_SLUG__-dev \
+#     --build-arg TEST_MODE=full -t __PROJECT_SLUG__-test .
+#
+# Note: this copies the whole build context, and the scaffold ships no
+# `.dockerignore` yet. Do not build it with a populated `node_modules/` sitting
+# in the checkout, or the copy brings it in and the typescript lane skips its
+# `npm ci`; delete it (make clean CLEAN_ALL=1) first.
+
+ARG GATE_IMAGE=__PROJECT_SLUG__-dev
+FROM ${GATE_IMAGE}
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG TEST_MODE=full
+
+# Validate the mode before copying anything, so a typo costs seconds rather than
+# a full context transfer.
+RUN set -euo pipefail; \
+    case "${TEST_MODE}" in \
+      smoke | lint | docs | full) printf 'test mode: %s\n' "${TEST_MODE}" ;; \
+      *) \
+        printf 'error: unknown TEST_MODE=%s\n' "${TEST_MODE}" >&2; \
+        printf 'error: valid modes are: smoke, lint, docs, full\n' >&2; \
+        exit 1 ;; \
+    esac
+
+ENV TEST_MODE=${TEST_MODE} \
+    TEST_SCRIPT='set -euo pipefail; case "$$TEST_MODE" in \
+      smoke) bash tests/run.sh --lane shell ;; \
+      lint) make lint ;; \
+      docs) make docs ;; \
+      full) make doctor; make test ;; \
+      *) printf "error: unknown TEST_MODE=%s (valid: smoke, lint, docs, full)\n" "$$TEST_MODE" >&2; exit 1 ;; \
+    esac'
+
+# The tree is test data here, so chown it to the non-root gate user: pytest,
+# mypy and go all write caches, and a read-only /work would turn a passing suite
+# into a permission error.
+COPY --chown=1000:1000 . /work
+WORKDIR /work
+
+# Running the gate at build time makes the image tag itself the evidence: a red
+# suite means the image does not exist.
+RUN bash -c "$TEST_SCRIPT"
+
+# And again at run time, so `docker run --rm` of an already-built tag is still a
+# real check rather than a stored verdict.
+CMD bash -c "$TEST_SCRIPT"

@@ -1,0 +1,32 @@
+# blank_issues_enabled: false
+#
+# Why blank issues are off here:
+#
+# A blank issue costs the maintainer a triage round to ask for the four things
+# every report needs anyway - what you ran, what you expected, what happened, and
+# what you already tried. With templates, those arrive filled in and the first
+# reply can be an answer instead of a questionnaire. It also keeps the issue list
+# legible enough to be a useful backlog rather than a pile of "not working".
+#
+# The two templates cover almost everything:
+#
+#   - Bug report: something that used to work, or should have, does not.
+#   - Feature request: something missing that you want added.
+#
+# If neither fits, do not hunt for a blank form. Choose the closer one and say at
+# the top why it does not fit; a maintainer will retag or convert it. Discussions
+# and questions belong where they can be answered by more than one person:
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability - do not open an issue
+    url: https://github.com/__PROJECT_OWNER__/__PROJECT_NAME__/security/policy
+    about: >-
+      Report anything that could expose data, bypass auth, or run code without
+      permission through a private Security Advisory, per SECURITY.md. A public
+      issue is a disclosure.
+  - name: Usage question
+    url: https://github.com/__PROJECT_OWNER__/__PROJECT_NAME__/discussions
+    about: >-
+      "How do I..." belongs in Discussions, where the answer stays findable. Open
+      an issue instead when the docs themselves are wrong or missing, using the
+      feature request template.

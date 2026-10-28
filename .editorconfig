@@ -1,0 +1,72 @@
+# EditorConfig -- the one formatting contract that is not a linter argument.
+#
+# Every editor that honours editorconfig.org applies this on save, so the
+# formatter and the human stop fighting. The CI formatter check and the
+# pre-commit hooks assert exactly these rules; if you disable one here, the
+# build starts disagreeing with your editor, which is the failure mode this
+# file exists to prevent.
+#
+# Stop here when walking up the tree: a checkout of this repo must never
+# inherit the defaults of a directory that happens to contain it.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+# Tabs are the gofmt output. Spaces here means every `go fmt` run shows as a
+# diff, and `gofmt -l` then fails CI on files nobody touched by hand.
+[*.go]
+indent_style = tab
+
+# Make recipes must begin with a real tab; spaces are a parse error, not a
+# style choice.
+[Makefile]
+indent_style = tab
+[makefile]
+indent_style = tab
+[*.mk]
+indent_style = tab
+
+# Two trailing spaces in Markdown are a hard line break. Trimming them turns a
+# line break into a run-on paragraph, so leave them alone here.
+[*.md]
+trim_trailing_whitespace = false
+
+# Patch bodies and diffs are data; whitespace inside them is meaningful.
+[*.patch]
+trim_trailing_whitespace = false
+[*.diff]
+trim_trailing_whitespace = false
+
+# Generated and vendored trees are not ours to reformat: reindenting a lockfile
+# or a generated client makes every regeneration diff unreadable.
+[{package-lock.json,yarn.lock,pnpm-lock.yaml,*.min.js,*.min.css}]
+indent_style = tab
+indent_size = 4
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.{c,h,cc,cpp,hpp}]
+indent_style = space
+indent_size = 4
+
+[*.toml]
+indent_style = space
+indent_size = 2

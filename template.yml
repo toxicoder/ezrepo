@@ -1,0 +1,50 @@
+# template.yml -- GitHub repository-template metadata.
+#
+# GitHub reads this file to render the "Include all branches / enter name" form
+# when someone clicks *Use this template*. It is also the contract a scaffolding
+# CLI reads, so the two must stay in step: the renderer substitutes the
+# `__PROJECT_*__` tokens in file contents and paths before the first commit, and
+# any token left unsubstituted fails the render.
+#
+# Rules for editing this file:
+#   - Keep it valid YAML: `python3 -c "import yaml; yaml.safe_load(open('template.yml'))"`
+#   - Every `params` entry needs a `values` list of concrete examples. A param
+#     without examples invites a free-text typo that surfaces only after the
+#     repo exists and the links are already broken.
+#   - Do not add a param that has no consumer in the template tree. A knob
+#     nobody reads is a knob nobody tests.
+name: __PROJECT_NAME__
+# Quoted on purpose: a description is free text and a `: ` inside an unquoted YAML
+# scalar is a syntax error, which is exactly what the default description contains. The
+# scaffolding CLI also strips the characters that would close this scalar early.
+description: "__PROJECT_DESCRIPTION__"
+
+# Parameters GitHub collects on the *Use this template* form. The CLI maps these
+# onto the render tokens of the same name.
+params:
+  project_description:
+    name: One-line description
+    description: >-
+      What this repo is, in one sentence, imperative-neutral, no trailing
+      period. It becomes the GitHub "About" text and the first line of
+      README.md, so write it for someone deciding whether to open the repo.
+    type: text
+    required: true
+    values:
+      - Command-line tool that renders infra diagrams from a config file
+      - Internal service that puts one endpoint in front of several upstream APIs
+      - Reference implementation of the import pipeline with a conformance suite
+
+  owner:
+    name: GitHub owner
+    description: >-
+      The account or organisation that will own the repository. It fills the
+      SECURITY.md contact address, the CODEOWNERS rule, and the badges, so a
+      wrong value here silently means every required-reviewer rule points at a
+      nonexistent account and reviews stop being requested.
+    type: text
+    required: true
+    values:
+      - your-github-handle
+      - your-org-name
+      - your-org-name/team-handle

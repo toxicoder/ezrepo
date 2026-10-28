@@ -1,0 +1,110 @@
+# pyproject.toml - project metadata and the home of every python tool setting.
+#
+# One file, one source of truth per tool: ruff, pytest and coverage are
+# configured here and nowhere else, and the coverage threshold is a value in
+# [tool.coverage.report] rather than a number shell compares with -ge. When CI
+# and an editor disagree about a rule, this file is the arbiter.
+#
+# Versions are NOT pinned here: the toolchain lives in tool-versions.env at the
+# repo root (RUFF_VERSION, MYPY_VERSION, PYTEST_VERSION) and CI installs from it.
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "__PROJECT_SLUG__"
+version = "0.1.0"
+description = "__PROJECT_DESCRIPTION__"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "__PROJECT_OWNER__" }]
+keywords = ["__PROJECT_NAME__"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Utilities",
+]
+
+[project.scripts]
+# The console entry point. main() takes argv as an optional argument precisely
+# so this line can name it directly: the wrapper passes nothing and main() then
+# reads sys.argv[1:], which is the same path the tests exercise.
+__PROJECT_SLUG__ = "__PROJECT_MODULE__.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/__PROJECT_OWNER__/__PROJECT_NAME__"
+Issues = "https://github.com/__PROJECT_OWNER__/__PROJECT_NAME__/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/__PROJECT_MODULE__"]
+
+[tool.ruff]
+# src/ is the source root, so ruff classifies `import __PROJECT_MODULE__` as
+# first-party and orders it after the stdlib block instead of guessing.
+src = ["src"]
+line-length = 100
+target-version = "py311"
+# Generated and vendored trees are not ours to reformat.
+extend-exclude = ["docs/api"]
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import order, UP modern syntax, B the bugbear
+# class of real bugs, ANN "it type-hinted, therefore it is typed", D docstrings.
+# Deliberately strict: a new template should not start by relaxing a rule.
+select = ["E", "W", "F", "I", "UP", "B", "ANN", "D"]
+
+[tool.ruff.lint.pydocstyle]
+# Google style, so Args:/Returns:/Raises: blocks read the same in every file in
+# this repo and match the AGENTS.md convention for the shell # @function blocks.
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# A test name is a sentence, not an imperative; and a test that asserts nothing
+# is caught by the coverage gate below, not by a naming rule.
+"tests/**/*.py" = ["D103", "ANN001", "ANN201"]
+
+[tool.pytest.ini_options]
+# The dispatcher calls `pytest tests`; testpaths is what a bare `pytest` run
+# from the repo root collects, and both point at the python lane only so the
+# shell/ts/go tests never leak into a pytest session.
+testpaths = ["tests/python"]
+pythonpath = ["src"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+
+[tool.coverage.run]
+# Branch coverage, because a statement-level 100% still allows an untested
+# `else`. source is the package dir, so `--cov` measures shipped code and not
+# the harness that measures it.
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+# The gate. 100 is a choice, not an aspiration: the template ships three small
+# functions and every one of them is tested, so anything below 100 means a new
+# branch arrived without a test.
+fail_under = 100
+precision = 2
+show_missing = true
+skip_covered = false
+# Lines that cannot run in a test run and are not logic: the interpreter guard
+# and typing-only imports. Anything else that needs an exclusion is a design
+# smell to fix, not a line to hide.
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+]
+# Everything below is harness or third-party, never the product.
+omit = [
+  "*/tests/*",
+  "*/site-packages/*",
+  "*/.venv/*",
+  "*/venv/*",
+  "*/__main__.py",
+  "conftest.py",
+]

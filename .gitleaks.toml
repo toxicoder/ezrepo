@@ -1,0 +1,36 @@
+# gitleaks configuration for __PROJECT_NAME__.
+#
+# gitleaks discovers this file at the repository root automatically, so the
+# secret-scan job needs no extra argument. It exists so that a false positive can be
+# silenced with a written reason, which is the honest alternative to wrapping the scan
+# in `continue-on-error` or `|| exit 0` and turning a security gate back into theatre.
+#
+# Two rules for editing this file:
+#   1. Allowlist a literal string, never a whole file. `paths = ['.env.example']` would
+#      silence a genuine secret the day somebody pastes one in there.
+#   2. Every entry needs the `description` that explains why it is safe. An entry
+#      nobody can justify gets deleted, not kept.
+
+title = "gitleaks config for __PROJECT_NAME__"
+
+[extend]
+# Keep gitleaks' own ruleset. Replacing it with a hand-written ruleset is how a
+# project ends up scanning for exactly the secrets its author already thought of.
+useDefault = true
+
+[allowlist]
+description = "Documented placeholders, not credentials"
+regexes = [
+  # The literal placeholder shipped in env.example. It is written out in full so a
+  # real key that merely resembles it still trips the scan.
+  '''change-me-not-a-real-key''',
+  # Reserved documentation domain: RFC 2606 guarantees no host resolves here, so a
+  # URL using it can never carry a live endpoint.
+  '''api\.example\.invalid''',
+  # Sample tokens used in README and doc examples. These are dead by construction and
+  # appear more than once, which is what would otherwise make them noisy.
+  '''sk-example-[A-Za-z0-9-]+''',
+  '''ghp_example-[A-Za-z0-9-]+''',
+]
+# Commit hashes never belong here: a secret in history is fixed by rotating it, and an
+# allowlist entry that says "this commit is fine" is how a rotated secret stays leaked.

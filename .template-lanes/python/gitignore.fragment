@@ -1,0 +1,32 @@
+# Python build, test and cache junk. Nothing here is a source of truth.
+
+# Byte-compiled / optimised
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtualenvs (the lane expects CI to use the runner's python, not a committed venv)
+.venv/
+venv/
+env/
+ENV/
+
+# Tool caches - all three are per-version and regenerate on first run
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Type stubs generated on demand
+.mypyc_cache/
+*.so

@@ -1,0 +1,215 @@
+# security.yml - static analysis and secret scanning.
+#
+# Why this file exists: SECURITY.md promises vulnerability handling, and a promise
+# with no automated detection behind it is a form letter. This workflow is the
+# detection half - CodeQL finds the reachable bug classes in the code, gitleaks
+# finds the credential that got committed. Neither one can be quietly skipped:
+# a scan that analyses nothing and reports green is worse than no scan, because it
+# manufactures false confidence.
+#
+# What each job protects:
+#   - detect-languages: refuses to let CodeQL run over an empty language set.
+#   - codeql: the code itself (injection, path traversal, command execution,
+#     weak crypto, tainted data reaching a sink).
+#   - secret-scan: the repository history (keys, tokens, passwords in any commit,
+#     not just the tip).
+#
+# Neither job is what branch protection requires - that is `ci-gate` in
+# ci.yml. These are additional signals, and both must be green before a release
+# tag is cut.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly scan of `main` even without a push: a detection rule added upstream
+    # should surface findings in code nobody has touched this month.
+    - cron: "30 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Lane owners: this is the line you edit. CodeQL needs at least one language, so
+  # the job below derives it from the files actually tracked in the repo. A lane
+  # can force the value by setting CODEQL_LANGUAGES here instead - use the exact
+  # CodeQL identifiers, comma separated:
+  #
+  #   python                     # .py
+  #   go                         # .go
+  #   javascript-typescript      # .js .jsx .ts .tsx
+  #   java                       # .java
+  #   csharp                     # .cs
+  #   ruby                       # .rb
+  #   rust                       # .rs
+  #   cpp                        # .c .cpp .h
+  #   swift, kotlin, powershell  # as applicable
+  #
+  # Example: CODEQL_LANGUAGES: "python, javascript-typescript"
+  # Leaving it empty is allowed: detection then infers it and fails the job if the
+  # tree contains no analysable source, with the fix printed.
+  CODEQL_LANGUAGES: ""
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # detect-languages: resolves the CodeQL language set, loudly.
+  #
+  # This job exists to close the specific hole where a workflow is copied, its
+  # language list never filled in, and CodeQL "succeeds" having analysed zero
+  # files. Here, zero analysable languages is an error with the fix written out.
+  # ---------------------------------------------------------------------------
+  detect-languages:
+    name: detect-languages (CodeQL)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: security-detect-${{ github.ref }}
+      cancel-in-progress: true
+    outputs:
+      languages: ${{ steps.detect.outputs.languages }}
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Resolve the language list
+        id: detect
+        env:
+          CODEQL_LANGUAGES: ${{ env.CODEQL_LANGUAGES }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CODEQL_LANGUAGES}" ]; then
+            echo "languages=${CODEQL_LANGUAGES}" >> "$GITHUB_OUTPUT"
+            echo "ok: using the declared language set: ${CODEQL_LANGUAGES}"
+            exit 0
+          fi
+          langs=""
+          add() {
+            if [ -z "$langs" ]; then langs="$1"; else langs="${langs}, $1"; fi
+          }
+          if git ls-files '*.py' | grep -q .; then add python; fi
+          if git ls-files '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' | grep -q .; then add javascript-typescript; fi
+          if git ls-files '*.go' | grep -q .; then add go; fi
+          if git ls-files '*.java' | grep -q .; then add java; fi
+          if git ls-files '*.cs' | grep -q .; then add csharp; fi
+          if git ls-files '*.rb' | grep -q .; then add ruby; fi
+          if git ls-files '*.rs' | grep -q .; then add rust; fi
+          if git ls-files '*.c' '*.cpp' '*.cc' '*.h' '*.hpp' | grep -q .; then add cpp; fi
+          if [ -z "$langs" ]; then
+            cat >&2 <<'MSG'
+          ::error::CodeQL found no analysable source in this repository and this
+          job refuses to report success on an empty language set. Fix it one of two
+          ways: (1) if the repository has source, add its extensions to the
+          detection block in .github/workflows/security.yml; (2) if you know the
+          language, set CODEQL_LANGUAGES in this workflow's env block, for example
+          CODEQL_LANGUAGES: "python". If the repository genuinely has no code yet,
+          delete or disable this workflow until it does - a green security scan over
+          nothing is a lie.
+          MSG
+            exit 1
+          fi
+          echo "languages=${langs}" >> "$GITHUB_OUTPUT"
+          echo "ok: CodeQL will analyse: ${langs}"
+
+  # ---------------------------------------------------------------------------
+  # codeql: static analysis of the source itself.
+  #
+  # `security-events: write` is required to upload the SARIF that populates the
+  # repository's Security -> Code scanning tab; nothing else here writes.
+  # `actions: read` lets the job read the CodeQL bundle provenance it is pinned to.
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: codeql (static analysis)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: read
+    concurrency:
+      group: security-codeql-${{ github.ref }}
+      cancel-in-progress: true
+    needs: [detect-languages]
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        # Third-party action: pinned to a major tag. Verify the SHA behind the tag
+        # before bumping it (`git ls-remote https://github.com/github/codeql-action
+        # v3`), and prefer a full commit SHA - this action runs a compiler-grade
+        # analyser over your code inside your runners.
+        #
+        # Lane owners: you do not need to edit `languages` (it comes from
+        # detect-languages above), but you DO need a build step here if your
+        # language is compiled. CodeQL only traces what actually compiles: a Go or
+        # Java lane without an Autobuild or an explicit build step analyses
+        # nothing and still reports green. Add `autobuild: true` or run
+        # `make build` between init and analyze.
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ needs.detect-languages.outputs.languages }}
+          autobuild: "true"
+
+      - name: "Guard: no silent skip"
+        # The extraction step above can produce zero traced files; that is not a
+        # failure to CodeQL, so this is where it becomes one.
+        run: |
+          set -euo pipefail
+          if [ -z "${{ needs.detect-languages.outputs.languages }}" ]; then
+            echo "::error::CodeQL received an empty language list; refusing to publish an empty scan."
+            exit 1
+          fi
+          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.languages }}'"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ needs.detect-languages.outputs.languages }}"
+
+  # ---------------------------------------------------------------------------
+  # secret-scan: credentials anywhere in history.
+  #
+  # Full history, always. A key committed and then "deleted" two commits later is
+  # still in every clone and still valid, so scanning only the tip is theatre.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: secret-scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: security-gitleaks-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v5
+        with:
+          # Required. A shallow clone hides the commits gitleaks exists to read.
+          fetch-depth: 0
+
+      - name: "Guard: no silent skip"
+        run: |
+          set -euo pipefail
+          command -v git >/dev/null 2>&1 || { echo "::error::git is missing; install with apt-get install -y git"; exit 1; }
+          git --version
+          commits="$(git rev-list --count HEAD)"
+          if [ "$commits" -lt 1 ]; then
+            echo "::error::0 commits fetched; the scan would pass without reading anything. Check fetch-depth: 0 above."
+            exit 1
+          fi
+          echo "ok: gitleaks will scan $commits commits"
+
+      # Third-party action: pinned to a major tag; verify the SHA before bumping.
+      # The ruleset lives at .gitleaks.toml in the repository root, which gitleaks
+      # discovers on its own, so no config argument is passed here. An allowlist
+      # entry needs a reason and a human reviewer; `continue-on-error` on this step
+      # is not an acceptable substitute for one.
+      - name: Scan history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

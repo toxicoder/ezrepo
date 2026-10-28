@@ -1,0 +1,15 @@
+# shellcheck configuration for the rendered project.
+#
+# Read automatically by shellcheck whenever it runs from the project root, which is
+# how `scripts/lint-shell.sh` (the shell lane) and the pre-commit hook both invoke
+# it. Options are set here rather than only on the command line so an editor
+# integration and CI agree on what a shell file must satisfy.
+
+# Files are bash unless they say otherwise; every script in this scaffold starts
+# with `#!/usr/bin/env bash` and a `# shellcheck shell=bash` directive.
+shell=bash
+
+# Sourced helpers are resolved relative to the file that sources them, and a
+# rendered project may source a library that CI installs later. Following the
+# source is still attempted; only the "file not found" complaint is silenced.
+disable=SC1091

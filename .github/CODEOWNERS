@@ -1,0 +1,21 @@
+# CODEOWNERS - who must approve before a merge.
+#
+# This file does nothing on its own. It becomes load-bearing only when branch
+# protection on `main` has "Require a review from a code owner" switched on,
+# which is the state this repo expects; without that setting a CODEOWNERS file is
+# decoration and reviews are optional. Verify the setting after the first push:
+#
+#   gh api repos/__PROJECT_OWNER__/__PROJECT_NAME__/branches/main/protection \
+#     --jq '.required_pull_request_reviews.require_code_owner_review'
+#
+# That must print `true`. If it 404s, branch protection is not configured at all
+# and `main` accepts direct pushes.
+#
+# A rule pointing at an account that does not exist is worse than no rule: GitHub
+# silently stops requesting the review, the check stays green, and the merge
+# proceeds unreviewed. Keep the handle below real.
+#
+# Lane owners and doc owners may add narrower rules beneath the catch-all - the
+# last matching rule wins, so more specific paths go below, not above.
+
+* @__PROJECT_OWNER__
