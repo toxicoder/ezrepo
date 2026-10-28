@@ -1,0 +1,252 @@
+# release.yml - publishes a release when you push a tag.
+#
+# Why this file exists: this project has shipped zero releases and zero tags,
+# which means every consumer has been pinned to a moving `main` and nobody can
+# say which commit broke them. A release workflow is the difference between
+# "use main" and "use v1.4.2", and the second is the one that makes a project
+# depend-able-on.
+#
+# The tagging convention, spelled out because it is the part everyone gets wrong:
+#
+#   - Tags are `vMAJOR.MINOR.PATCH` - leading `v`, three numeric components, no
+#     prefix, no suffix other than a SemVer prerelease: `v1.0.0`, `v1.0.1`,
+#     `v2.0.0-rc.1`. This workflow triggers on `v*`, so a tag named `1.0.0`,
+#     `release-1.0`, or `v1.0` silently produces no release at all.
+#   - Version numbers follow SemVer 2.0.0 (see CHANGELOG.md): breaking change =
+#     MAJOR, additive = MINOR, fix-only = PATCH.
+#   - Cut the tag from `main` only, and only at a commit whose CI was green.
+#     Tagging an untested commit publishes an artifact nobody verified.
+#   - The CHANGELOG must contain a `## [X.Y.Z] - YYYY-MM-DD` section for the exact
+#     version, with `## [Unreleased]` re-created above it. This job reads that
+#     section for the release notes and fails if it is missing, so the release
+#     notes are never a blank box.
+#
+# Cutting a release, in full:
+#
+#   git switch main && git pull --ff-only
+#   make lint && make test && make validate      # must be green, not assumed
+#   # edit CHANGELOG.md: rename [Unreleased] to [X.Y.Z] - YYYY-MM-DD, add a fresh
+#   # empty [Unreleased] block above it
+#   git commit -am "chore: release v1.2.3"
+#   git tag -a v1.2.3 -m "v1.2.3"
+#   git push origin main && git push origin v1.2.3   # the push of the tag is the trigger
+#
+# Deleting and re-pushing a tag after a release is published is not supported: the
+# artifact URL people pinned would silently change meaning. Publish a new patch
+# version instead.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Read-only at the top; the `release` job raises it to `contents: write` because
+# creating a GitHub Release is the one thing here that genuinely needs to write.
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # build: turns the tagged commit into the artifacts that get published.
+  #
+  # It protects reproducibility: the artifact is built from the tag, in CI, from a
+  # pinned runner image, so what a user downloads is derivable from a commit
+  # rather than from someone's laptop state. Never attach a locally built binary.
+  #
+  # The default artifact set is the source archive for the tag, which is what
+  # every project here can honestly produce. A lane that compiles adds its build
+  # step and its own `--artifact` upload below, immediately after `Build source
+  # archives`, and must install its toolchain in the step before it - never behind
+  # a `command -v` presence check that skips.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: release-build-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v5
+        with:
+          # The changelog section is read from history, and a tag released against
+          # a shallow clone cannot be verified with --verify-tag without it.
+          fetch-depth: 0
+
+      - name: "Guard: no silent skip"
+        run: |
+          set -euo pipefail
+          missing=0
+          require() {
+            local tool="$1" install="$2"
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::required tool '$tool' is not installed. Install: $install"
+              missing=$((missing + 1))
+              return
+            fi
+            if ! "$tool" --version >/dev/null 2>&1; then
+              echo "::error::required tool '$tool' is on PATH but does not answer --version. Install: $install"
+              missing=$((missing + 1))
+              return
+            fi
+            echo "ok: $tool $("$tool" --version 2>&1 | head -n 1)"
+          }
+          require git     "apt-get install -y git"
+          require tar     "apt-get install -y tar"
+          require zip     "apt-get install -y zip"
+          require sha256sum "apt-get install -y coreutils"
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::$missing required tool(s) missing or broken. A release built without its toolchain is not a release; fix the environment."
+            exit 1
+          fi
+
+      - name: Validate the tag name
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$tag' is not a valid release tag. Use vMAJOR.MINOR.PATCH, optionally with a SemVer prerelease: v1.2.3 or v1.2.3-rc.1. Delete the tag, retag correctly, and push again."
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "push" ] && ! git tag --points-at HEAD | grep -qx "$tag"; then
+            echo "::error::HEAD does not carry tag '$tag'; refusing to build a release from a commit that is not the tag."
+            exit 1
+          fi
+          echo "ok: releasing $tag"
+
+      - name: Build source archives
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          slug="${TAG#v}"
+          prefix="__PROJECT_SLUG__-${slug}"
+          git archive --format=tar.gz --prefix="${prefix}/" -o "dist/${prefix}.tar.gz" "refs/tags/${TAG}"
+          git archive --format=zip --prefix="${prefix}/" -o "dist/${prefix}.zip" "refs/tags/${TAG}"
+          ( cd dist && sha256sum ./*.tar.gz ./*.zip > SHA256SUMS )
+          ls -l dist
+          # Verify the archives are readable and contain the tree; an empty tarball
+          # is a release that ships nothing, and it uploads happily.
+          tar -tzf "dist/${prefix}.tar.gz" | head -n 5
+          test -n "$(tar -tzf "dist/${prefix}.tar.gz")"
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: dist-${{ steps.meta.outputs.tag }}
+          path: dist/
+          retention-days: 90
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # release: publishes the artifacts and writes the release notes from
+  # CHANGELOG.md.
+  #
+  # It protects communication: a release with no notes is a commit hash, and
+  # nobody reads a commit hash to decide whether to upgrade. The notes come from
+  # the changelog section for this exact version, and a missing section fails the
+  # job rather than publishing an empty one.
+  # ---------------------------------------------------------------------------
+  release:
+    name: publish GitHub Release
+    runs-on: ubuntu-24.04
+    permissions:
+      # Raised from the top-level `contents: read`: this job creates a GitHub
+      # Release and uploads its assets, which is a write to the repository.
+      contents: write
+    concurrency:
+      group: release-publish-${{ github.ref }}
+      cancel-in-progress: false
+    needs: [build]
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: "Guard: no silent skip"
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null 2>&1 || {
+            msg="gh (GitHub CLI) is not installed. Install: apt-get install -y gh,"
+            msg+=" or see https://github.com/cli/cli#installation - it is preinstalled on"
+            msg+=" the ubuntu-24.04 runner image, so a miss here means the image changed."
+            echo "::error::${msg}"
+            exit 1
+          }
+          gh --version
+          command -v git >/dev/null 2>&1 || { echo "::error::git is missing; install with apt-get install -y git"; exit 1; }
+          git --version
+          echo "ok: release toolchain present"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: dist-${{ needs.build.outputs.tag }}
+          path: dist
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          test -f CHANGELOG.md || { echo "::error::CHANGELOG.md is missing; every release needs notes."; exit 1; }
+          status=0
+          awk -v want="$version" '
+            /^## \[[0-9]/ {
+              inside = ($0 ~ "^## \\[" want "\\]")
+              if (inside) { found = 1; next }
+            }
+            inside && /^## \[/ { exit }
+            inside { print }
+            END { if (!found) exit 3 }
+          ' CHANGELOG.md > release-notes.md || status=$?
+          if [ "$status" -eq 3 ] || [ ! -s release-notes.md ]; then
+            msg="CHANGELOG.md has no '## [$version] - YYYY-MM-DD' section (or it is empty)."
+            msg+=" Rename the [Unreleased] section to [$version] with today's date, add a"
+            msg+=" fresh [Unreleased] above it, commit, and re-tag."
+            msg+=" Release notes are never left blank."
+            echo "::error::${msg}"
+            exit 1
+          fi
+          echo "ok: release notes for $version, $(wc -l < release-notes.md) lines"
+          cat release-notes.md
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          case "$TAG" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --target main \
+            "${prerelease[@]}" \
+            dist/
+          gh release view "$TAG" --json tagName,assets \
+            --jq '"ok: \(.tagName) published with \(.assets | length) asset(s)"'
+          # A release with zero assets is the silent failure this guards against.
+          count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::release '$TAG' published with no assets; the upload step did not deliver anything."
+            exit 1
+          fi

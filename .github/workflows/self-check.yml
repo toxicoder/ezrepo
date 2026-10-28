@@ -1,0 +1,98 @@
+# .github/workflows/self-check.yml - the template's own conformance gate.
+#
+# Added beside the core ci.yml, which is a separate file and stays in charge of
+# lint, test, docs and the dependency audits. This job runs the one suite that
+# checks the repository as a template rather than as a program: the render tokens,
+# the lane metadata, the pin file, and the gates that could report green while
+# doing nothing. Those defects are invisible to every other job here, because a
+# broken template still builds and still passes its own tests.
+#
+# Nothing here may skip quietly: the version comes from the pin file with `:?` so a
+# missing key fails the job, the installer is verified by the guard step, and the
+# one conditional in the file is the documented case where the artifact is absent by
+# design - a project rendered from this template has no .self-check/, and its first
+# CI run has to read as "not applicable" instead of red.
+name: self-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only. This job reads the tree and runs a suite; it never needs to write, and
+# a check that can write to the repository is a check that can approve itself.
+permissions:
+  contents: read
+
+jobs:
+  self-check:
+    name: Template conformance (bats)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve pinned tool versions
+        id: pins
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing - it is the single pin source for this repo"
+            exit 1
+          fi
+          # shellcheck disable=SC1091
+          . ./tool-versions.env
+          # The `:?` guard is the anti-silent-skip rule: a suite whose runner pin is
+          # absent must fail here, not fall back to a moving "latest".
+          echo "bats_version=${BATS_VERSION:?BATS_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+
+      - name: Install bats-core
+        run: |
+          set -euo pipefail
+          ver='${{ steps.pins.outputs.bats_version }}'
+          # The runner has no write access to /usr/local, so install into a prefix the
+          # job owns and publish its bin directory to the steps that follow. Installing
+          # from the pinned tag rather than a package registry keeps one source of
+          # truth for the version, which is tool-versions.env.
+          git clone --depth 1 --branch "v${ver#v}" \
+            https://github.com/bats-core/bats-core.git /tmp/bats-core
+          /tmp/bats-core/install.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+
+      - name: Guard - every pinned tool is on PATH
+        run: |
+          set -euo pipefail
+          if ! command -v bats >/dev/null 2>&1; then
+            echo "::error::bats is not on PATH after install. See the install step above for the pinned version and its download URL."
+            exit 1
+          fi
+          bats --version
+          # The suite parses YAML with the interpreter rather than with a bats plugin,
+          # so prove that dependency here too; an ImportError surfacing inside a
+          # assertion reads as a broken template, not as a missing package.
+          if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+            echo "::error::python3 has no yaml module, which .self-check/self-check.bats needs to parse the workflows and template.yml. Install it: python3 -m pip install pyyaml"
+            exit 1
+          fi
+          echo "ok: python3 $(python3 --version 2>&1) with the yaml module"
+
+      - name: Run the template conformance suite
+        run: |
+          set -euo pipefail
+          # The suite is generator-owned, like .template-lanes/ and .git, so a
+          # rendered project does not carry it. Saying so out loud is not a silent
+          # skip: the absent directory is the contract, and the note is the record
+          # that the guard ran. In this repository the directory is tracked, so the
+          # branch that runs the suite is the one that gets taken.
+          if [ -d .self-check ]; then
+            bash .self-check/run.sh
+          else
+            echo "note: .self-check/ is generator-owned and not in this tree, so the template conformance suite is absent by design; nothing to run"
+          fi

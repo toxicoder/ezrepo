@@ -1,32 +1,59 @@
 {
-  "name": "Ultimate Dev Container (Ubuntu 24.04 Multi-Arch)",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "name": "__PROJECT_NAME__",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,
       "configureZshAsDefaultShell": true,
-      "installOhMyZsh": true
+      "installOhMyZsh": true,
+      "installOhMyZshConfig": true,
+      "upgradePackages": true,
+      "username": "vscode",
+      "userUid": "1000",
+      "userGid": "1000"
     },
-    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/git:1": {
+      "ppa": true
+    },
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "moby": false,
+      "moby": true,
       "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
-    "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
-  },
-  "customizations": {
-    "vscode": {
-      "extensions": ["ms-vscode-remote.remote-containers"]
     }
   },
   "remoteUser": "vscode",
-  "postCreateCommand": "echo '✅ Ultimate dev environment ready! Run `node --version`, `python --version`, `docker --version` to verify.'",
+  "updateRemoteUserUID": true,
+  "containerEnv": {
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "GOTOOLCHAIN": "local",
+    "GOPATH": "/tmp/gopath",
+    "GOCACHE": "/tmp/go-build",
+    "XDG_CACHE_HOME": "/tmp/.cache"
+  },
   "hostRequirements": {
     "cpus": 2,
     "memory": "4gb",
-    "storage": "10gb",
-    "gpu": "optional" // Enables GPU passthrough automatically on NVIDIA hosts
+    "storage": "10gb"
+  },
+  "postCreateCommand": "make doctor",
+  "customizations": {
+    "vscode": {
+      "extensions": ["timonwong.shellcheck", "mkhl.shfmt", "redhat.vscode-yaml", "esbenp.prettier-vscode"],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.rulers": [120],
+        "files.eol": "\n",
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true,
+        "files.trimFinalNewlines": true,
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "[markdown]": {
+          "files.trimTrailingWhitespace": false
+        }
+      }
+    }
   }
 }

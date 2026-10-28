@@ -1,0 +1,107 @@
+# .golangci.yml -- the go lane's lint and format profile.
+#
+# golangci-lint v2 reads this shape: a top-level `version: "2"` key, linters
+# under `linters:`, and the formatters split out under `formatters:` of their
+# own. The v1 flat form (top-level `linters-settings:`, `run.skip-dirs:`,
+# `issues.exclude-rules:`) is rejected outright by v2, so a config copied from a
+# pre-v2 repo fails at startup rather than silently doing less.
+#
+# The profile is deliberately narrow: the standard set plus the rules that catch
+# what a reviewer would otherwise catch by eye. Widen it by adding a name to
+# `linters.enable`, not by excluding what is already there.
+#
+# Consumed by: `make lint` (golangci-lint run ./...), scripts/test-go.sh, and the
+# go lane's CI job. All three run the same binary version, the one pinned as
+# GOLANGCI_LINT_VERSION in tool-versions.env, so a rule added here cannot pass
+# locally and fail CI on a version skew.
+version: "2"
+
+run:
+  # The language floor, mirroring the `go` directive in go.mod. Linters reason
+  # about the version they parse, so the two must not drift; if go.mod moves,
+  # this moves in the same commit.
+  go: "1.27"
+  # _test.go files are linted too. Turning this off would hide the exact class
+  # of bug the lane's tests exist to prevent.
+  tests: true
+  # Bounded so a hung analysis is a red run, not a job that times out at the
+  # runner level with no message.
+  timeout: 3m
+  # Never reach for the network to satisfy a missing module: a lane build that
+  # needs a download is a go.mod/go.sum bug and must say so.
+  modules-download-mode: readonly
+
+linters:
+  # golangci-lint's own default set (errcheck, govet, ineffassign, staticcheck,
+  # unused), plus the handful of rules this lane holds to. `all` is not an
+  # option here: it enables linters whose opinions the lane has not adopted.
+  default: standard
+  enable:
+    - copyloopvar # loop variables are per-iteration in Go 1.22+; the old `tc := tc` copy is noise
+    - gocyclo # a switch that needs a comment is a switch that needs a function
+    - godot # doc comments are sentences, so `go doc` output reads as prose
+    - gosec # the security checks the docs promise: unsafe exec, weak crypto, permissions
+    - misspell # typos in comments and strings, which `gofmt` will never flag
+    - nolintlint # a nolint directive without a reason is a silenced bug
+    - prealloc # a slice whose length is known before the loop should be sized once
+    - revive # the style rules the Go toolchain deliberately does not enforce
+    - unconvert # a conversion that changes nothing is a lie about the type
+    - unparam # a parameter or result that never varies is dead weight
+    - usestdlibvars # http.MethodGet over "GET" is the same string with a compiler behind it
+
+  settings:
+    errcheck:
+      # `_ = err` and `x, _ := f()` both hide a failure the same way.
+      check-blank: true
+      # An unchecked type assertion panics; it is an error path, not a cast.
+      check-type-assertions: true
+
+    gocyclo:
+      # 10 is the tool default and it reads as a nag on ordinary dispatch code.
+      # 12 still catches the branch pile-ups this lane cares about.
+      min-complexity: 12
+
+    govet:
+      # Extra analyser check beyond the standard govet set: a shadowed err is the
+      # bug where the inner assignment is the one that never gets checked.
+      enable:
+        - shadow
+
+    nolintlint:
+      # A directive must name what it silences, and say why, or the next reader
+      # cannot tell it from a leftover.
+      require-explanation: true
+      require-specific: true
+
+    staticcheck:
+      # The whole staticcheck bag, style checks included. Narrowing this to a
+      # hand-list is how a config silently rots.
+      checks: ["all"]
+
+  exclusions:
+    # golangci-lint's own curated false positives (generated code, stdlib error
+    # idioms). Cheaper than re-listing them per rule below.
+    presets:
+      - comments
+      - common-false-positives
+      - std-error-handling
+    # Test tables repeat themselves on purpose: that is what a table is.
+    rules:
+      - path: '_test\.go'
+        linters:
+          - gocyclo
+          - prealloc
+
+formatters:
+  # `make fmt` runs `go fmt ./...`; this is the gate that proves it was run, and
+  # the one that also sorts imports, which gofmt alone does not do.
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      # First-party imports get their own group at the bottom, so a rendered
+      # repo's internal packages never blur into third-party ones.
+      local-prefixes:
+        - github.com/__PROJECT_OWNER__/__PROJECT_SLUG__

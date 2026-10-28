@@ -1,0 +1,44 @@
+{
+  // JSON-with-comments: this file is read by tsc, which accepts JSONC. It is NOT
+  // read by npm or by any strict JSON parser - package.json stays pure JSON.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // "paths" is resolved against this file, so no baseUrl is needed - and TS 6 makes
+    // the option a hard error on its way out. A bare "paths" block keeps the alias
+    // working and keeps `tsc --noEmit` clean on the pinned compiler.
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    // "strict" is the switch that matters. The four flags below are already
+    // implied by it and are written out on purpose: strict is a bundle whose
+    // contents upstream may change, and a flag spelled here keeps checking what
+    // this repo requires even after a TypeScript upgrade quietly redefines the
+    // bundle. The redundancy is deliberate - do not "clean it up".
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    // Not in "strict", and the one that catches the real bug class here: argv is
+    // always indexed, and without this `argv[0]` types as string, never
+    // undefined, so the missing-argument branch reads as unreachable dead code
+    // and nobody writes the test for it.
+    "noUncheckedIndexedAccess": true,
+
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "coverage", "docs/api"]
+}

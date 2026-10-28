@@ -1,0 +1,384 @@
+# security.yml - static analysis and secret scanning.
+#
+# Why this file exists: SECURITY.md promises vulnerability handling, and a promise
+# with no automated detection behind it is a form letter. This workflow is the
+# detection half - CodeQL finds the reachable bug classes in the code, gitleaks
+# finds the credential that got committed. Neither one can be quietly skipped:
+# a scan that analyses nothing and reports green is worse than no scan, because it
+# manufactures false confidence.
+#
+# What each job protects:
+#   - detect-languages: refuses to let CodeQL run over an empty language set.
+#   - codeql (interpreted) / codeql (compiled): the code itself (injection, path
+#     traversal, command execution, weak crypto, tainted data reaching a sink).
+#   - secret-scan: the repository history (keys, tokens, passwords in any commit,
+#     not just the tip).
+#
+# Neither job is what branch protection requires - that is `ci-gate` in
+# ci.yml. These are additional signals, and both must be green before a release
+# tag is cut.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly scan of `main` even without a push: a detection rule added upstream
+    # should surface findings in code nobody has touched this month.
+    - cron: "30 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Lane owners: this is the line you edit. CodeQL needs at least one language, so
+  # the job below derives it from the files actually tracked in the repo. A lane
+  # can force the value by setting CODEQL_LANGUAGES here instead - use the exact
+  # CodeQL identifiers, comma separated:
+  #
+  #   python                     # .py
+  #   go                         # .go
+  #   javascript-typescript      # .js .jsx .ts .tsx
+  #   java                       # .java
+  #   csharp                     # .cs
+  #   ruby                       # .rb
+  #   rust                       # .rs
+  #   cpp                        # .c .cpp .h
+  #   swift, kotlin, powershell  # as applicable
+  #
+  # Example: CODEQL_LANGUAGES: "python, javascript-typescript"
+  # Leaving it empty is allowed: detection then infers it from the files tracked
+  # outside the generator-owned lane payload, and fails the job if the repository
+  # has no analysable source of its own, with the fix printed.
+  CODEQL_LANGUAGES: ""
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # detect-languages: resolves the CodeQL language set, loudly.
+  #
+  # This job exists to close the specific hole where a workflow is copied, its
+  # language list never filled in, and CodeQL "succeeds" having analysed zero
+  # files. Here, zero analysable languages is an error with the fix written out.
+  # The one case it does not fail is a template checkout, where the only
+  # CodeQL-readable files are the lane overlays; that case prints what was skipped
+  # and why, and both scan jobs stand down instead of scanning nothing quietly.
+  # ---------------------------------------------------------------------------
+  detect-languages:
+    name: detect-languages (CodeQL)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: security-detect-${{ github.ref }}
+      cancel-in-progress: true
+    outputs:
+      languages: ${{ steps.detect.outputs.languages }}
+      interpreted: ${{ steps.detect.outputs.interpreted }}
+      compiled: ${{ steps.detect.outputs.compiled }}
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Resolve the language list
+        id: detect
+        env:
+          CODEQL_LANGUAGES: ${{ env.CODEQL_LANGUAGES }}
+        run: |
+          set -euo pipefail
+          # CodeQL takes at most one build mode per job, and a language refuses a mode
+          # it cannot honour: the Go extractor rejects `none` outright, and Python
+          # rejects anything but `none`. So the set is split here and each half gets its
+          # own job and its own mode, rather than one job guessing for all of them.
+          add() {
+            if [ -z "$2" ]; then printf '%s' "$1"; else printf '%s, %s' "$2" "$1"; fi
+          }
+          is_compiled() {
+            case " $1 " in
+              *" go "* | *" java "* | *" csharp "* | *" cpp "* | *" rust "*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          langs=""
+          interpreted=""
+          compiled=""
+          payload_only=""
+          # Generator-owned payload: the lane overlays a scaffolding tool copies to the
+          # project root and then strips from the rendered tree. It is sample code on
+          # loan, not this repository's source, and CodeQL cannot read it either way -
+          # its JavaScript/TypeScript file finder stops at a dot-prefixed directory, so
+          # the extractor walks past `.template-lanes/` entirely and then reports that
+          # it saw no JavaScript at all. Counting such a language anyway asks a job to
+          # scan code the scanner is blind to, which fails the scan rather than
+          # revealing anything. The payload gets its CodeQL pass in every repository
+          # rendered from this template, because there it sits at the root; inside this
+          # repository each lane is held to its own real toolchain (lint, typecheck,
+          # tests) by the per-lane jobs in .github/workflows/ci.yml.
+          GENERATED_RE='^(\.template-lanes|\.self-check)/'
+          add_lang() {
+            local lang="$1"
+            langs="$(add "${lang}" "${langs}")"
+            if is_compiled "${lang}"; then
+              compiled="$(add "${lang}" "${compiled}")"
+            else
+              interpreted="$(add "${lang}" "${interpreted}")"
+            fi
+          }
+          own_source() {
+            git ls-files -- "$@" | { grep -vE "${GENERATED_RE}" || true; } | grep -q .
+          }
+          any_source() { git ls-files -- "$@" | grep -q .; }
+          consider() {
+            local lang="$1"
+            shift
+            if own_source "$@"; then
+              add_lang "${lang}"
+            elif any_source "$@"; then
+              payload_only="$(add "${lang}" "${payload_only}")"
+            fi
+          }
+          write_outputs() {
+            echo "languages=${langs}" >>"$GITHUB_OUTPUT"
+            echo "interpreted=${interpreted}" >>"$GITHUB_OUTPUT"
+            echo "compiled=${compiled}" >>"$GITHUB_OUTPUT"
+          }
+          if [ -n "${CODEQL_LANGUAGES}" ]; then
+            declared="$(printf '%s' "${CODEQL_LANGUAGES}" | tr ',' ' ')"
+            for lang in ${declared}; do add_lang "${lang}"; done
+            write_outputs
+            echo "ok: using the declared language set: ${langs}"
+            exit 0
+          fi
+          consider python '*.py'
+          consider javascript-typescript '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs'
+          consider go '*.go'
+          consider java '*.java'
+          consider csharp '*.cs'
+          consider ruby '*.rb'
+          consider rust '*.rs'
+          consider cpp '*.c' '*.cpp' '*.cc' '*.h' '*.hpp'
+          if [ -z "${langs}" ] && [ -z "${payload_only}" ]; then
+            cat >&2 <<'MSG'
+          ::error::CodeQL found no analysable source in this repository and this
+          job refuses to report success on an empty language set. Fix it one of two
+          ways: (1) if the repository has source, add its extensions to the
+          detection block in .github/workflows/security.yml; (2) if you know the
+          language, set CODEQL_LANGUAGES in this workflow's env block, for example
+          CODEQL_LANGUAGES: "python". If the repository genuinely has no code yet,
+          delete or disable this workflow until it does - a green security scan over
+          nothing is a lie.
+          MSG
+            exit 1
+          fi
+          if [ -z "${langs}" ]; then
+            echo "::notice::CodeQL skipped: the only source here is generator-owned lane payload (${payload_only})."
+            cat <<'MSG'
+          The lane overlays under .template-lanes/ are sample code that a scaffolding
+          tool copies to the project root and then strips, and CodeQL's file finder
+          stops at a dot-prefixed directory, so it cannot read them from this location.
+          They get their CodeQL pass wherever they become real code: every repository
+          scaffolded from this template, where the lane lands at the root. Inside this
+          repository each lane is held to its own lint, typecheck and test jobs in
+          .github/workflows/ci.yml. A project that puts one of these languages at its
+          root is scanned normally, and a repository with no source at all still fails
+          this job rather than passing over an empty scan.
+          MSG
+            write_outputs
+            exit 0
+          fi
+          if [ -n "${payload_only}" ]; then
+            echo "::notice::'${payload_only}' appears only as generator-owned lane payload, which CodeQL cannot read from here."
+            echo "It is scanned in every repository scaffolded from this template, where the lane lands at the root. See the comment above the detection block."
+          fi
+          write_outputs
+          echo "ok: CodeQL will analyse '${langs}' as interpreted='${interpreted}' compiled='${compiled}'"
+
+  # ---------------------------------------------------------------------------
+  # codeql: static analysis of the source itself, split by build mode.
+  #
+  # `security-events: write` is required to upload the SARIF that populates the
+  # repository's Security -> Code scanning tab; nothing else here writes.
+  # `actions: read` lets the job read the CodeQL bundle provenance it is pinned to.
+  #
+  # Two jobs, not one, because codeql-action accepts a single build mode per job and
+  # a language refuses a mode it cannot honour: Python rejects everything but `none`,
+  # and the Go extractor rejects `none` outright. One job over both languages cannot
+  # be configured correctly, so the halves run separately and each skips only when
+  # detect-languages found no language of its kind.
+  # ---------------------------------------------------------------------------
+  codeql-interpreted:
+    name: codeql (interpreted)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: read
+    concurrency:
+      group: security-codeql-interpreted-${{ github.ref }}
+      cancel-in-progress: true
+    needs: [detect-languages]
+    if: needs.detect-languages.outputs.interpreted != ''
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        # Third-party action: pinned to a major tag. Verify the SHA behind the tag
+        # before bumping it (`git ls-remote https://github.com/github/codeql-action
+        # v3`), and prefer a full commit SHA - this action runs a compiler-grade
+        # analyser over your code inside your runners.
+        #
+        # `none` is the only mode these languages accept and the right one: nothing
+        # here is compiled, so an autobuild would only look for a build that does not
+        # exist (and, for Python, reach for a `python2` no runner has).
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ needs.detect-languages.outputs.interpreted }}
+          build-mode: none
+
+      - name: "Guard: no silent skip"
+        # The job is already conditioned on a non-empty list, so reaching it with an
+        # empty one means the condition or the outputs were edited apart. CodeQL
+        # itself fails a language it extracted nothing from, so this guard covers the
+        # plumbing rather than the scan.
+        run: |
+          set -euo pipefail
+          if [ -z "${{ needs.detect-languages.outputs.interpreted }}" ]; then
+            echo "::error::CodeQL received an empty interpreted language list; refusing to publish an empty scan."
+            exit 1
+          fi
+          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.interpreted }}'"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ needs.detect-languages.outputs.interpreted }}"
+
+  codeql-compiled:
+    name: codeql (compiled)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: read
+    concurrency:
+      group: security-codeql-compiled-${{ github.ref }}
+      cancel-in-progress: true
+    needs: [detect-languages]
+    if: needs.detect-languages.outputs.compiled != ''
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v5
+
+      - name: Load pinned tool versions
+        # Read before setup-go so the compiler CodeQL watches is the compiler
+        # tool-versions.env names, rather than whatever the runner image froze.
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing; every tool version here comes from it"
+            exit 1
+          fi
+          grep -E '^[A-Z0-9_]+=' tool-versions.env >>"$GITHUB_ENV"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Initialize CodeQL
+        # `manual`, because the one build this tree needs is the one the step below
+        # runs and names. Autobuild would hunt for a go.mod at the root, which a
+        # compiled language only has once it is rendered into a project, and `none` is
+        # refused by the Go extractor.
+        #
+        # Lane owners: you do not need to edit `languages` (it comes from
+        # detect-languages above), but a compiled lane DOES need its build added to the
+        # step below. CodeQL only traces what actually compiles: a compiled language
+        # with no build reports green having analysed nothing.
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ needs.detect-languages.outputs.compiled }}
+          build-mode: manual
+
+      - name: "Guard: no silent skip"
+        run: |
+          set -euo pipefail
+          if [ -z "${{ needs.detect-languages.outputs.compiled }}" ]; then
+            echo "::error::CodeQL received an empty compiled language list; refusing to publish an empty scan."
+            exit 1
+          fi
+          echo "ok: CodeQL initialised for '${{ needs.detect-languages.outputs.compiled }}'"
+
+      - name: Build the Go code for CodeQL
+        # Under build-mode: manual this is the only thing that produces Go traces, so
+        # a Go language with no build here would publish an empty scan and call it
+        # clean. A rendered project has go.mod at the root; a repository that declares
+        # CODEQL_LANGUAGES: go itself may keep the module inside the lane overlay, so
+        # that path is tried as well. Neither may pass silently, so a tree with neither
+        # is an error rather than a note.
+        run: |
+          set -euo pipefail
+          if [ -f go.mod ]; then
+            printf -- '-> go build ./... (root module)\n'
+            go build ./...
+          elif [ -f .template-lanes/go/go.mod ]; then
+            printf -- '-> go build ./... (go lane overlay)\n'
+            (cd .template-lanes/go && go build ./...)
+          else
+            echo "::error::CodeQL is analysing Go but no go.mod was found at the root or in .template-lanes/go; refusing to publish an empty Go scan."
+            exit 1
+          fi
+          echo "ok: the Go module compiled, so CodeQL has traces to analyse"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ needs.detect-languages.outputs.compiled }}"
+
+  # ---------------------------------------------------------------------------
+  # secret-scan: credentials anywhere in history.
+  #
+  # Full history, always. A key committed and then "deleted" two commits later is
+  # still in every clone and still valid, so scanning only the tip is theatre.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: secret-scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: security-gitleaks-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v5
+        with:
+          # Required. A shallow clone hides the commits gitleaks exists to read.
+          fetch-depth: 0
+
+      - name: "Guard: no silent skip"
+        run: |
+          set -euo pipefail
+          command -v git >/dev/null 2>&1 || { echo "::error::git is missing; install with apt-get install -y git"; exit 1; }
+          git --version
+          commits="$(git rev-list --count HEAD)"
+          if [ "$commits" -lt 1 ]; then
+            echo "::error::0 commits fetched; the scan would pass without reading anything. Check fetch-depth: 0 above."
+            exit 1
+          fi
+          echo "ok: gitleaks will scan $commits commits"
+
+      # Third-party action: pinned to a major tag; verify the SHA before bumping.
+      # The ruleset lives at .gitleaks.toml in the repository root, which gitleaks
+      # discovers on its own, so no config argument is passed here. An allowlist
+      # entry needs a reason and a human reviewer; `continue-on-error` on this step
+      # is not an acceptable substitute for one.
+      - name: Scan history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

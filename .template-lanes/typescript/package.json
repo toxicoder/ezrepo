@@ -1,0 +1,40 @@
+{
+  "//": [
+    "devDependencies are exact versions. The four keys that also live in",
+    "tool-versions.env (prettier, typescript, eslint, vitest) must match it:",
+    "npm reads this file and CI reads that one, so scripts/test-typescript.sh",
+    "asserts the two agree and fails the build when they drift.",
+    "typescript sits below the npm latest tag because typescript-eslint declares",
+    "typescript >=4.8.4 <6.1.0 and typedoc's peer list ends at 6.0.x."
+  ],
+  "name": "__PROJECT_SLUG__",
+  "version": "0.1.0",
+  "description": "__PROJECT_DESCRIPTION__",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "fmt": "prettier --write .",
+    "fmt:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "docs:generate": "typedoc --out docs/api src/index.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "5.0.5",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "jsdom": "30.1.3",
+    "prettier": "3.9.10",
+    "typedoc": "0.28.20",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
+  }
+}

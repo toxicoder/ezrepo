@@ -1,0 +1,20 @@
+# Lane scratch produced by the shell toolchain, never a source of truth.
+
+# bats: per-test tmp dirs, the --timing report, and TAP output from CI uploaders
+.bats-tmp/
+bats-report/
+*.tap
+
+# shellcheck machine-readable output (CI artefact, `-f json > shellcheck.json`)
+shellcheck.json
+shellcheck.sarif
+
+# shfmt scratch and shell coverage from bashcov / kcov if anyone wires them in
+*.sh.orig
+*.sh.cor
+coverage/
+kcov/
+
+# Ad-hoc traces from running the CLI by hand
+*.out
+*.err

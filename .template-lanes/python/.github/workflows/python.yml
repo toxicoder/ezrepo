@@ -1,0 +1,88 @@
+# .github/workflows/python.yml - the python lane's CI job.
+#
+# Added by the python lane; core ci.yml is untouched. Same shape as the shell
+# job: read the pins, install exactly them, guard that they landed, run the same
+# script a developer runs. The pip cache key is tool-versions.env itself, so a
+# pin change is the only thing that invalidates it.
+#
+# Every tool version comes from tool-versions.env with a `:?` guard. There is no
+# `pip install ruff` line without a version anywhere in this file, and no step
+# that reports success when its binary is missing.
+name: lane-python
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python lane (ruff + mypy + pytest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve pinned tool versions
+        id: pins
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing - it is the single pin source for this repo"
+            exit 1
+          fi
+          # shellcheck disable=SC1091
+          . ./tool-versions.env
+          echo "ruff_version=${RUFF_VERSION:?RUFF_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+          echo "mypy_version=${MYPY_VERSION:?MYPY_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+          echo "pytest_version=${PYTEST_VERSION:?PYTEST_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+          echo "pytest_cov_version=${PYTEST_COV_VERSION:?PYTEST_COV_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          # 3.12 is the interpreter this lane is developed against; requires-python
+          # in pyproject.toml (>=3.11) is the floor the tests must satisfy on every
+          # supported version. There is no PYTHON_VERSION key in tool-versions.env
+          # yet - when one is added, read it here instead of hard-coding.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tool-versions.env
+
+      - name: Install the pinned toolchain
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            "ruff==${{ steps.pins.outputs.ruff_version }}" \
+            "mypy==${{ steps.pins.outputs.mypy_version }}" \
+            "pytest==${{ steps.pins.outputs.pytest_version }}" \
+            "pytest-cov==${{ steps.pins.outputs.pytest_cov_version }}"
+
+      - name: Guard - every pinned tool is importable
+        run: |
+          set -euo pipefail
+          missing=0
+          for probe in ruff mypy pytest pytest_cov; do
+            if ! python -c "import ${probe}" >/dev/null 2>&1; then
+              echo "::error::${probe} is not importable after install. Check the pin in tool-versions.env and the install step above."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          python -m ruff --version
+          python -m mypy --version
+          python -m pytest --version
+
+      - name: Lint, typecheck, test (scripts/test-python.sh)
+        run: bash scripts/test-python.sh

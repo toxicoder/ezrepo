@@ -1,0 +1,72 @@
+# .yamllint.yml -- one YAML profile for the whole repo.
+#
+# Shared by three consumers so local and CI cannot disagree: the `yamllint`
+# pre-commit hook, the `lint` job in .github/workflows/ci.yml, and anyone
+# running `yamllint -c .yamllint.yml .` by hand.
+#
+# Do not add per-directory exceptions here to make a red run green. Fix the
+# document, or add a `# yamllint disable rule:x` line at the exact spot with a
+# reason next to it, so the next reader can judge it.
+extends: default
+
+rules:
+  # 200, above .editorconfig's 120 on purpose. The files this rule has to accept are
+  # workflows, and a workflow carries shell inside a `run:` block scalar, where a
+  # long line is normal and wrapping it would hurt the script more than the lint
+  # helps. The ceiling is still worth having: it stops a runaway one-liner, which is
+  # what a 200-column YAML document actually means. Warning level, and the
+  # pre-commit hook runs --strict, so a breach still stops the commit.
+  line-length:
+    max: 200
+    level: warning
+    allow-non-breakable-inline-mappings: true
+
+  # The `---` opener is noise in a single-document config file, and its absence
+  # is not a defect. Disabled so the rule stops generating churn on every new
+  # workflow file.
+  document-start: disable
+
+  # A trailing blank line is what end-of-file-fixer already normalises; two
+  # tools fighting over it produces an oscillating diff.
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+
+  # Truthy words (`yes`, `no`, `on`, `off`) silently become booleans in YAML 1.1
+  # parsers. Checked on values, where it is a real bug. Keys are exempt: GitHub
+  # Actions spells its triggers `on:`, which is the one key in the ecosystem that
+  # must stay truthy-shaped, and failing every workflow file over it would only
+  # teach people to disable the rule wholesale.
+  truthy:
+    level: error
+    allowed-values: ["true", "false"]
+    check-keys: false
+
+  # Comments should read as prose.
+  comments:
+    level: warning
+    min-spaces-from-content: 1
+  comments-indentation:
+    level: warning
+
+  # Duplicate keys are a real bug: the last one silently wins.
+  key-duplicates:
+    level: error
+
+  indentation:
+    spaces: consistent
+    indent-sequences: consistent
+
+ignore: |
+  bazel-*/
+  node_modules/
+  .venv*/
+  venv/
+  package-lock.json
+  *.yaml.j2
+  site/
+  .tox/
+  dist/
+  build/
+  out/

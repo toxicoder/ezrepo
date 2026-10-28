@@ -1,0 +1,132 @@
+# .pre-commit-config.yaml -- the gate that runs before a commit exists.
+#
+# Two rules govern this file, and both come from failures this repo has already
+# paid for:
+#
+#   1. A check that silently skips is a bug. Two earlier repos printed
+#      "tool not found ... Skipping" and then reported green, so the gate was
+#      theatre. Every local hook below asserts its binary answers `--version`
+#      (or at least exists on PATH) and exits 1 with the install command if it
+#      does not. There is no `|| exit 0` anywhere in this file, and a review
+#      must reject one that appears.
+#   2. Pin everything. No `@latest`, no moving tags. Each `rev:` below is a
+#      released tag, and third-party actions in `.github/workflows/` are pinned
+#      the same way.
+#
+# Run it manually any time:
+#
+#   pre-commit run --all-files
+#   pre-commit autoupdate        # opens a PR-sized diff; review it, do not blind-merge
+#
+# If a hook is genuinely wrong for a file, fix the hook or add an explicit
+# `# noqa` / `exclude:` with a reason in the commit message. Do not add `exit 0`.
+default_stages: [pre-commit]
+fail_fast: false
+# A hook that hangs is a failed hook, not an open PR.
+default_language_version:
+  python: python3
+
+repos:
+  # --- Local hooks: the tools this project standardises on -------------------
+  #
+  # `language: system` means the binary must already be installed -- there is no
+  # virtualenv to hide in and no silent download. That is exactly why each entry
+  # starts with a `command -v` guard: the failure mode of a system hook is a
+  # missing binary, and pre-commit's default for that is a confusing traceback
+  # rather than an actionable message.
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: shellcheck (shell lint, severity=warning)
+        description: >-
+          Fails when shellcheck is absent, then lints every shell script at
+          severity=warning. Quoting and word-splitting defects are the most
+          common shell bug here.
+        entry: >-
+          bash -c 'command -v shellcheck >/dev/null 2>&1 || { echo "error:
+          shellcheck is required but not on PATH. Install it:
+          apt-get install -y shellcheck, or brew install shellcheck, or pipx
+          install shellcheck-py. See tool-versions.env for the pinned set."
+          >&2; exit 1; }; shellcheck --severity=warning "$@"' --
+        args: []
+        files: \.(sh|bash|ksh)$
+        language: system
+        require_serial: false
+
+      - id: shfmt
+        name: shfmt (shell format, 2-space indent, case indent)
+        description: >-
+          Fails when shfmt is absent, then checks formatting. `-i 2` matches
+          .editorconfig, `-ci` indents case blocks so a diff shows the branch
+          that changed.
+        entry: >-
+          bash -c 'command -v shfmt >/dev/null 2>&1 || { echo "error: shfmt is
+          required but not on PATH. Install it: go install
+          mvdan.cc/sh/v3/cmd/shfmt@v3.10.0 | apt-get install -y shfmt |
+          brew install shfmt" >&2; exit 1; }; shfmt -l -d -i 2 -ci "$@"' --
+        args: []
+        files: \.(sh|bash|ksh)$
+        language: system
+
+      - id: yamllint
+        name: yamllint (YAML lint, .yamllint.yml)
+        description: >-
+          Fails when yamllint is absent, then lints YAML against the shared
+          .yamllint.yml profile. Catches the tab-in-YAML and
+          truthy-`yes`-becomes-boolean bugs before CI.
+        entry: >-
+          bash -c 'command -v yamllint >/dev/null 2>&1 || { echo "error:
+          yamllint is required but not on PATH. Install it:
+          pipx install yamllint | pip install yamllint |
+          apt-get install -y yamllint | brew install yamllint" >&2; exit 1; };
+          yamllint -c .yamllint.yml --strict "$@"' --
+        args: []
+        files: \.(yml|yaml)$
+        language: system
+
+      - id: prettier
+        name: prettier (markdown, json, yaml)
+        description: >-
+          Fails when prettier is absent, then normalises markdown, JSON and
+          YAML so formatting stops appearing in review diffs. Rewrites files in
+          place; if the commit stops with a modified file, re-add it.
+        entry: >-
+          bash -c 'command -v prettier >/dev/null 2>&1 || { echo "error:
+          prettier is required but not on PATH. Install it:
+          npm install --global prettier@3 | npx --yes prettier@3 --version"
+          >&2; exit 1; }; prettier --write "$@"' --
+        args: []
+        files: \.(md|markdown|json|yml|yaml)$
+        exclude: ^(package-lock\.json|.*\.lock\.json|.*generated/.*)$
+        language: system
+
+  # --- pre-commit-hooks: cheap structural checks ------------------------------
+  #
+  # Pinned to a released tag. Before bumping, confirm the tag resolves to the
+  # commit you expect (`git ls-remote --tags
+  # https://github.com/pre-commit/pre-commit-hooks`) and prefer replacing the
+  # tag with the full commit SHA for anything this repo depends on for security.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # A committed 20 MB asset is unrecoverable from history without a rewrite;
+      # 500 kB is well past what any hand-written file needs.
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+      # A committed conflict marker is a build break that always ships by
+      # accident, because it usually sits in a file nobody re-reads.
+      - id: check-merge-conflict
+
+      # Private keys must never enter history, not even "temporarily".
+      - id: detect-private-key
+
+      # Matches .editorconfig insert_final_newline; a missing newline makes
+      # every future append show a spurious diff on the last line.
+      - id: end-of-file-fixer
+        exclude: ^(package-lock\.json|.*\.min\.(js|css))$
+
+      # Matches .editorconfig trim_trailing_whitespace, except in markdown where
+      # two trailing spaces are a hard line break.
+      - id: trailing-whitespace
+        exclude: \.md$

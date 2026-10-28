@@ -1,0 +1,59 @@
+# .gitattributes -- normalisation and diff behaviour, authoritative over
+# core.autocrlf. `.editorconfig` is what an editor does on save; this file is
+# what lands in the object store, so the two must agree and this one wins.
+#
+# Normalize everything to LF in the repo, check out LF. Mixed line endings in a
+# cross-platform repo produce whole-file diffs that no review can read, and
+# they break shell scripts and git hooks on Linux with a trailing \r.
+* text=auto eol=lf
+
+# Text files that must never be re-ended, spelled out so a future `* text=auto`
+# edit cannot silently catch them.
+*.sh text eol=lf
+*.bash text eol=lf
+*.bats text eol=lf
+*.tf text eol=lf
+*.py text eol=lf
+*.go text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+Dockerfile* text eol=lf
+Makefile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Never run CRLF conversion or a text diff over bytes: it corrupts the asset and
+# wastes review time on a diff that renders as one long line.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.tgz binary
+*.wasm binary
+
+# Mark machine-owned files so they collapse in the GitHub diff view and stay out
+# of language statistics. A reviewer scrolling a 40k-line lockfile diff never
+# reaches the 20 lines of real change below it.
+package-lock.json linguist-generated=true -diff
+yarn.lock linguist-generated=true -diff
+pnpm-lock.yaml linguist-generated=true -diff
+npm-shrinkwrap.json linguist-generated=true -diff
+poetry.lock linguist-generated=true -diff
+uv.lock linguist-generated=true -diff
+go.sum linguist-generated=true -diff
+Cargo.lock linguist-generated=true -diff
+composer.lock linguist-generated=true -diff
+Gemfile.lock linguist-generated=true -diff
+MODULE.bazel.lock linguist-generated=true -diff
+**/generated/** linguist-generated=true
+**/gen/** linguist-generated=true
+**/*.pb.go linguist-generated=true
+**/*_pb2.py linguist-generated=true

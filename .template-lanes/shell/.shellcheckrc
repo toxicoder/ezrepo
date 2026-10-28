@@ -1,0 +1,28 @@
+# .shellcheckrc - one shellcheck profile for the whole repository.
+#
+# Read automatically by every shellcheck invocation from the repo root, so the
+# editor plugin, scripts/lint-shell.sh, the pre-commit hook and CI cannot
+# disagree about what "clean" means. Options only: a `disable=` here is a
+# repo-wide silence, so it needs a reason next to it or it does not belong.
+
+# Resolve every `source`/`.` relative to the file being checked, not to the
+# caller's cwd. Without this, `scripts/lint-shell.sh` run from the repo root
+# would look for src/lib/greet.sh relative to the repo root and silently check
+# less than it claims.
+source-path=SCRIPTDIR
+
+# Follow sources that live outside the set of files passed on the command line.
+# src/main.sh sources src/lib/greet.sh; without this, -x only follows files that
+# were themselves handed to shellcheck, and the library goes unlinted.
+external-sources=true
+
+# The bats helper `load` and the computed `source "$SELF_DIR/lib/..."` in
+# src/main.sh are paths shellcheck cannot resolve statically, so the
+# "can't follow non-constant source" note is expected noise here. It stays
+# info-level for anything that runs without --severity=warning.
+disable=SC1090
+
+# Every case statement needs a default branch. The CLI dispatchers in this repo
+# answer an unknown subcommand with exit 2, and a missing default is exactly how
+# a typo in a subcommand name becomes a silent no-op instead of a failure.
+enable=add-default-case

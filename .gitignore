@@ -1,13 +1,141 @@
-# Dev Container / VS Code
-.devcontainer/.vscode/
-.vscode/*.log
-.vscode/*.code-workspace
+# .gitignore -- language-neutral only.
+#
+# What belongs here: things that are true of every project regardless of
+# language, plus the artifacts that get committed by accident often enough to be
+# worth pre-empting (`.coverage`, `coverage.xml`, `__pycache__/`, `*.bak`, and once a
+# fully populated `.env`). What does NOT belong here: per-language toolchain output.
+# Those rules arrive as fragments appended below by the language lane that renders
+# (`lane <name> -> .template-lanes/<name>/.gitignore`), so a Python repo
+# does not carry Rust rules it will never produce, and a lane can be removed
+# without leaving orphaned patterns behind.
+#
+# Everything appended by a lane lands after the "lane fragments" marker at the
+# bottom. Do not add language-specific patterns above that line; put them in the
+# lane.
 
-# Common ignores
+# ---------------------------------------------------------------------------
+# Secrets and local environment
+#
+# The rule is: an env file is never committed, and every env file ships a
+# committed `.example` twin documenting its keys. `.env.example` is the twin;
+# the negation below is what keeps it tracked after `.env.*` excludes it, and
+# it must come after the exclude to win. If you add `.env.local`-style variants,
+# add the twin rule too or `git add .env.production.example` silently no-ops.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+secrets/
+credentials.json
+service-account*.json
+.gcloud/
+.aws/
+
+# ---------------------------------------------------------------------------
+# Coverage and test output
+#
+# These are derived from a run, so a committed copy is a stale claim about test
+# health that nobody can trust. Coverage output is never a source file.
+# ---------------------------------------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+coverage.lcov
+coverage.json
+cov.xml
+htmlcov/
+coverage/
+.coverage_history/
+.hypothesis/
+tmp/
+temp/
+.test-results/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.tox/
+.nox/
+.venv/
+.venv*/
+venv/
+env/
+pip-wheel-metadata/
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
 node_modules/
-*.log
+.npm/
+.eslintcache
+.stylelintcache
+.nyc_output/
+.yarn/
+
+# ---------------------------------------------------------------------------
+# Build and distribution output (language-neutral names)
+# ---------------------------------------------------------------------------
+dist/
+build/
+out/
+bin/
+target/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# ---------------------------------------------------------------------------
+# Bazel runfiles symlinks
+#
+# These are absolute symlinks into the caller's output base; committing one
+# makes the checkout unbuildable for the next person. The glob form catches
+# every workspace name, the explicit names catch the common default.
+# ---------------------------------------------------------------------------
+bazel-*
+bazel-bin/
+bazel-out/
+bazel-testlogs/
+.bazelrc.user
+
+# ---------------------------------------------------------------------------
+# Editors, OS, and scratch
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
-.env
-*.pyc
-__pycache__/
+*.log
+*.bak
+*.orig
+*.rej
+
+# ---------------------------------------------------------------------------
+# Lane fragments
+#
+# Whoever renders this template appends
+# `.template-lanes/<lane>/gitignore.fragment` here, one section per lane, under a
+# `# --- lane: <name> ---` header naming the lane. Anything below this line came
+# from a lane and can be deleted with the lane.
+# ---------------------------------------------------------------------------

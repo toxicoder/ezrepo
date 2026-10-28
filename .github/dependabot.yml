@@ -1,0 +1,133 @@
+# dependabot.yml - dependency update PRs.
+#
+# Why this file exists: an unpinned or stale dependency is the cheapest way for a
+# healthy repo to rot. Updates arrive as PRs on a schedule, so the diff you review
+# is one bump, not a year of drift resolved in one panic.
+#
+# Two rules, matching the rest of the toolchain policy:
+#   1. No `@latest` and no moving tags anywhere, including here. Every `rev:` in
+#      .github/workflows/ names a major tag; verify the SHA behind a third-party
+#      tag before bumping it (`git ls-remote` the action repo) and prefer a full
+#      commit SHA for anything security-relevant.
+#   2. `open-pull-requests-limit` is finite on purpose. An unbounded bot that
+#      opens 40 PRs is a bot nobody reads, and unread PRs get bulk-closed, which
+#      is the same as having no updates at all.
+#
+# The `github-actions` stanza is live because every repo here runs workflows,
+# regardless of language. The language stanzas below are commented out and must be
+# uncommented (or replaced) by the lane that owns that manifest - see
+# .template-lanes/<lane>/.github/dependabot.yml. Uncomment a stanza whose manifest does
+# not exist and dependabot files a configuration error instead of PRs, so check
+# first:
+#
+#   ls go.mod package.json requirements.txt pyproject.toml poetry.lock uv.lock
+version: 2
+
+updates:
+  # --- Live: the workflow actions themselves ---------------------------------
+  #
+  # Actions are third-party code that runs on your runners with your token, so
+  # they are the dependency most in need of a review cadence. Grouped into a
+  # single PR per week: action bumps are usually mechanical, and 12 separate PRs
+  # for 12 actions is 12 merge queues for one review.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    labels:
+      - dependencies
+      - ci
+
+  # yamllint disable rule:comments-indentation
+  # --- Template stanzas: uncomment the one your lane owns ---------------------
+  #
+  # Each is complete as written: change `directory` to where the manifest lives
+  # ("." for a root package.json, "/" is also accepted), leave the limit at 5, and
+  # keep the `chore(deps)` prefix so `git log --grep='chore(deps)'` still finds
+  # them. Do not delete a stanza to make the config error go away; delete it only
+  # if the ecosystem genuinely has no manifest in this repo.
+  # yamllint enable rule:comments-indentation
+
+  # Python. `directory` is where pyproject.toml / requirements.txt lives. Requires
+  # a lockfile or a requirements file; pip without one resolves nothing.
+  # - package-ecosystem: pip
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "06:00"
+  #     timezone: Etc/UTC
+  #   open-pull-requests-limit: 5
+  #   commit-message:
+  #     prefix: "chore(deps)"
+  #     include: scope
+  #   labels:
+  #     - dependencies
+  #   groups:
+  #     python-minor-and-patch:
+  #       patterns:
+  #         - "*"
+  #       update-types:
+  #         - minor
+  #         - patch
+
+  # Node. Needs package.json plus a lockfile; without a lockfile the resolver is
+  # not reproducible and dependabot cannot tell you what changed.
+  # - package-ecosystem: npm
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "06:00"
+  #     timezone: Etc/UTC
+  #   open-pull-requests-limit: 5
+  #   commit-message:
+  #     prefix: "chore(deps)"
+  #     include: scope
+  #   labels:
+  #     - dependencies
+  #   groups:
+  #     npm-minor-and-patch:
+  #       patterns:
+  #         - "*"
+  #       update-types:
+  #         - minor
+  #         - patch
+
+  # Go. Requires go.mod and go.sum in `directory`. Bumps land as edits to both
+  # files plus a `go mod tidy`-shaped diff, which is why the prefix matters when
+  # reading history.
+  # - package-ecosystem: gomod
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "06:00"
+  #     timezone: Etc/UTC
+  #   open-pull-requests-limit: 5
+  #   commit-message:
+  #     prefix: "chore(deps)"
+  #     include: scope
+  #   labels:
+  #     - dependencies
+  #   groups:
+  #     go-minor-and-patch:
+  #       patterns:
+  #         - "*"
+  #       update-types:
+  #         - minor
+  #         - patch

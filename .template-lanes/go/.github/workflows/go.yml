@@ -1,0 +1,92 @@
+# .github/workflows/go.yml - the go lane's CI job.
+#
+# Added by the go lane; the core ci.yml is untouched. Same shape as the python job:
+# read the pins, install exactly them, guard that they landed, then run the same
+# script a developer runs. The module cache is keyed on go.mod alone because that is
+# the only file whose change can add a dependency.
+#
+# Both tool versions come from tool-versions.env behind a `:?` guard, so a deleted
+# key fails at the pin step and names itself. There is no unpinned `go install` in
+# this file and no step that reports success when its binary is missing.
+name: lane-go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go lane (gofmt + vet + golangci-lint + test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve pinned tool versions
+        id: pins
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing - it is the single pin source for this repo"
+            exit 1
+          fi
+          # shellcheck disable=SC1091
+          . ./tool-versions.env
+          # Guard first, then emit: a deleted key stops here and names itself, and no
+          # later step can read an empty version.
+          : "${GO_VERSION:?GO_VERSION missing from tool-versions.env}"
+          : "${GOLANGCI_LINT_VERSION:?GOLANGCI_LINT_VERSION missing from tool-versions.env}"
+          echo "go_version=${GO_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "golangci_lint_version=${GOLANGCI_LINT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.pins.outputs.go_version }}
+          cache: true
+          cache-dependency-path: go.mod
+
+      # Installed by hand rather than by an action so the version, the checksum
+      # surface and the binary path are all visible in this diff. The runner is
+      # ubuntu-24.04 on amd64, which is the archive named below; a future arm64
+      # matrix has to carry GOARCH through the archive name.
+      - name: Install the pinned linter
+        env:
+          GCL_VERSION: ${{ steps.pins.outputs.golangci_lint_version }}
+        run: |
+          set -euo pipefail
+          archive="golangci-lint-${GCL_VERSION}-linux-amd64"
+          curl -fsSLo /tmp/gcl.tgz \
+            "https://github.com/golangci/golangci-lint/releases/download/v${GCL_VERSION}/${archive}.tar.gz"
+          tar -xzf /tmp/gcl.tgz -C /tmp
+          sudo install -m 0755 "/tmp/${archive}/golangci-lint" /usr/local/bin/golangci-lint
+
+      - name: Guard - both tools report the pinned version
+        env:
+          GO_PIN: ${{ steps.pins.outputs.go_version }}
+          GCL_PIN: ${{ steps.pins.outputs.golangci_lint_version }}
+        run: |
+          set -euo pipefail
+          if ! go version | grep -qF "go${GO_PIN}"; then
+            echo "::error::go on PATH is $(go version) and the pin asks for ${GO_PIN}. Check the Set up Go step."
+            exit 1
+          fi
+          if ! golangci-lint --version | grep -qF "${GCL_PIN}"; then
+            echo "::error::golangci-lint on PATH is not ${GCL_PIN}. Check the Install step above and .golangci.yml."
+            exit 1
+          fi
+          go env GOVERSION
+          golangci-lint --version
+
+      - name: Lint and test (scripts/test-go.sh)
+        run: bash scripts/test-go.sh

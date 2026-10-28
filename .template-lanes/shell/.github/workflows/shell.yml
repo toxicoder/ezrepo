@@ -1,0 +1,97 @@
+# .github/workflows/shell.yml - the shell lane's CI job.
+#
+# Added by the shell lane; the core .github/workflows/ci.yml is a separate file
+# and stays in charge of lint/docs/dependency audits. This job installs the three
+# shell tools at the versions tool-versions.env pins and runs the same two
+# scripts a developer runs locally, so CI and `make test` cannot diverge.
+#
+# Nothing here may skip quietly: the versions come from the pin file with `:?`
+# so a missing key fails the job, each installer is verified by the guard step,
+# and the guard runs before any test so a broken install reads as "shellcheck is
+# missing, install it like this" instead of a green check.
+name: lane-shell
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: Shell lane (shellcheck + shfmt + bats)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve pinned tool versions
+        id: pins
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing - it is the single pin source for this repo"
+            exit 1
+          fi
+          # shellcheck disable=SC1091
+          . ./tool-versions.env
+          # The `:?` guards are the anti-silent-skip rule: a lane whose pin is
+          # absent must fail here, not fall back to a moving "latest".
+          echo "shellcheck_version=${SHELLCHECK_VERSION:?SHELLCHECK_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+          echo "shfmt_version=${SHFMT_VERSION:?SHFMT_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+          echo "bats_version=${BATS_VERSION:?BATS_VERSION missing from tool-versions.env}" >> "$GITHUB_OUTPUT"
+
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          ver='${{ steps.pins.outputs.shellcheck_version }}'
+          url="https://github.com/koalaman/shellcheck/releases/download/v${ver}/shellcheck-v${ver}.linux.x86_64.tar.xz"
+          curl -fsSLo /tmp/shellcheck.tar.xz "$url"
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-v${ver}/shellcheck" /usr/local/bin/shellcheck
+
+      - name: Install shfmt
+        run: |
+          set -euo pipefail
+          ver='${{ steps.pins.outputs.shfmt_version }}'
+          curl -fsSLo /tmp/shfmt "https://github.com/mvdan/sh/releases/download/v${ver}/shfmt_v${ver}_linux_amd64"
+          sudo install -m 0755 /tmp/shfmt /usr/local/bin/shfmt
+
+      - name: Install bats-core
+        run: |
+          set -euo pipefail
+          ver='${{ steps.pins.outputs.bats_version }}'
+          git clone --depth 1 --branch "v${ver#v}" \
+            https://github.com/bats-core/bats-core.git /tmp/bats-core
+          /tmp/bats-core/install.sh /usr/local
+
+      - name: Guard - every pinned tool is on PATH
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in shellcheck shfmt bats; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is not on PATH after install. See the install step above for the pinned version and its download URL."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          shellcheck --version
+          shfmt --version
+          bats --version
+
+      - name: Lint (scripts/lint-shell.sh)
+        run: bash scripts/lint-shell.sh
+
+      - name: Test (scripts/test-shell.sh)
+        run: bash scripts/test-shell.sh

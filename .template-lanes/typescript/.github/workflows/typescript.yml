@@ -1,0 +1,111 @@
+# .github/workflows/typescript.yml - the typescript lane's CI job.
+#
+# Added by the typescript lane; core ci.yml is untouched. Same shape as the python
+# and shell jobs: read the pins, install exactly them, guard that they landed, run
+# the same script a developer runs.
+#
+# Two things here differ from the pip lanes and both are worth knowing before you
+# edit this file:
+#
+#   - The dependency install is `npm ci`, which refuses to install anything the
+#     lockfile does not name. That is the point: package.json holds exact versions
+#     and scripts/check-pins.sh keeps them equal to tool-versions.env, so a runner
+#     that resolved its own versions would be testing a build nobody else has.
+#   - The npm cache and `npm ci` both hash package-lock.json, so a checkout without
+#     a committed lockfile cannot produce a reproducible run. That is an error below,
+#     not something papered over with an `npm install` fallback.
+#
+# No tool version literal appears in this file: they all come from
+# tool-versions.env, and the only other numbers are action major tags.
+name: lane-typescript
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript lane (eslint + tsc + vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Load pinned tool versions
+        run: |
+          set -euo pipefail
+          if [ ! -f tool-versions.env ]; then
+            echo "::error::tool-versions.env is missing - it is the single pin source for this repo"
+            exit 1
+          fi
+          grep -E '^[A-Z0-9_]+=' tool-versions.env >>"$GITHUB_ENV"
+
+      - name: Guard - every pin this lane needs is set, and the lockfile is committed
+        run: |
+          set -euo pipefail
+          : "${NODE_VERSION:?NODE_VERSION missing from tool-versions.env}"
+          : "${TYPESCRIPT_VERSION:?TYPESCRIPT_VERSION missing from tool-versions.env}"
+          : "${ESLINT_VERSION:?ESLINT_VERSION missing from tool-versions.env}"
+          : "${VITEST_VERSION:?VITEST_VERSION missing from tool-versions.env}"
+          : "${PRETTIER_VERSION:?PRETTIER_VERSION missing from tool-versions.env}"
+          printf 'ok: node %s, typescript %s, eslint %s, vitest %s\n' \
+            "$NODE_VERSION" "$TYPESCRIPT_VERSION" "$ESLINT_VERSION" "$VITEST_VERSION"
+          if [ ! -f package.json ]; then
+            echo "::error::package.json is missing, so the typescript lane has no manifest to honour"
+            exit 1
+          fi
+          if [ ! -f scripts/test-typescript.sh ]; then
+            echo "::error::scripts/test-typescript.sh is missing; the typescript lane ships it and this job runs it"
+            exit 1
+          fi
+          if [ ! -f package-lock.json ]; then
+            echo "::error::package-lock.json is not committed. npm ci and the npm cache below both" \
+              "need it: run npm install locally and commit the lockfile."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          # The interpreter version is a pin like any other, so it comes from
+          # tool-versions.env rather than a literal here, and the cache key is the
+          # file that decides what npm installs.
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the locked tree
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+
+      - name: Guard - every pinned tool is runnable
+        run: |
+          set -euo pipefail
+          missing=0
+          for probe in tsc eslint vitest; do
+            if ! npx --no-install "${probe}" --version >/dev/null 2>&1; then
+              echo "::error::${probe} is not runnable from node_modules/.bin after npm ci." \
+                "Check its devDependencies entry in package.json against the matching key in tool-versions.env."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          npx --no-install tsc --version
+          npx --no-install eslint --version
+          npx --no-install vitest --version
+
+      - name: Lint, typecheck, coverage (scripts/test-typescript.sh)
+        run: bash scripts/test-typescript.sh
