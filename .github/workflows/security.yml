@@ -79,7 +79,7 @@ jobs:
       compiled: ${{ steps.detect.outputs.compiled }}
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Resolve the language list
         id: detect
@@ -222,7 +222,7 @@ jobs:
     if: needs.detect-languages.outputs.interpreted != ''
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Initialize CodeQL
         # Third-party action: pinned to a major tag. Verify the SHA behind the tag
@@ -271,7 +271,7 @@ jobs:
     if: needs.detect-languages.outputs.compiled != ''
     steps:
       - name: Check out the tree
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Load pinned tool versions
         # Read before setup-go so the compiler CodeQL watches is the compiler
@@ -356,7 +356,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Check out the full history
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # Required. A shallow clone hides the commits gitleaks exists to read.
           fetch-depth: 0
