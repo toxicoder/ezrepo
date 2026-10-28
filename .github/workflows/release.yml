@@ -192,7 +192,7 @@ jobs:
           echo "ok: release toolchain present"
 
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: dist-${{ needs.build.outputs.tag }}
           path: dist
